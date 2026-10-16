@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Rotation Lock
+Comment=Lock or unlock the automatic screen rotation
+Exec=gta3xlwifi-autorotate --toggle-lock
+Icon=object-rotate-right
+Categories=Settings;DesktopSettings;
+OnlyShowIn=XFCE;

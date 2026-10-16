@@ -1,0 +1,12 @@
+#!/sbin/openrc-run
+
+description="Start Samsung WLBT and configure Wi-Fi interfaces for NetworkManager"
+
+depend() {
+	need networkmanager bluetooth
+	after wifibt rfkill
+}
+
+start() {
+	/usr/libexec/gta3xlwifi/wifibt-networkmanager start
+}

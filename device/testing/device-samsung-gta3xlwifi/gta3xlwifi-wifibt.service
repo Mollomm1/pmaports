@@ -1,0 +1,15 @@
+[Unit]
+Description=Prepare Samsung Exynos WLBT (Wi-Fi and Bluetooth)
+After=local-fs.target systemd-modules-load.service
+Before=NetworkManager.service wpa_supplicant.service bluetooth.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/gta3xlwifi/wifibt start
+# Power WLBT down before shutdown; a warm reboot otherwise finds it stale.
+ExecStop=/usr/libexec/gta3xlwifi/wifibt stop
+TimeoutSec=60
+
+[Install]
+WantedBy=multi-user.target

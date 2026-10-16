@@ -1,0 +1,4 @@
+# WLBT firmware start for Wi-Fi and Bluetooth; no file capabilities on KWin
+enable gta3xlwifi-wifibt.service
+enable gta3xlwifi-wifibt-networkmanager.service
+enable gta3xlwifi-kwin-rt.service

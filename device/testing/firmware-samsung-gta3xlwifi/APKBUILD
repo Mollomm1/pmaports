@@ -1,0 +1,60 @@
+pkgname=firmware-samsung-gta3xlwifi
+pkgver=1
+pkgrel=2
+pkgdesc="Firmware for the Samsung Galaxy Tab A 10.1 (2019)"
+url="https://github.com/Hedwig7s/firmware-samsung-gta3xlwifi"
+arch="aarch64"
+license="proprietary"
+options="!check !archcheck !strip !spdx !tracedeps pmb:cross-native"
+
+# Source
+_commit="17c9677aece174b91e4d28cd9c2dd30578b70e4f"
+_url="https://github.com/Hedwig7s/firmware-samsung-gta3xlwifi"
+source="$pkgname-$_commit.tar.gz::$_url/archive/$_commit.tar.gz
+	exynos7885_acpm_fvp.fw"
+
+package() {
+	install -Dm644 "$srcdir/exynos7885_acpm_fvp.fw" \
+		"$pkgdir"/usr/lib/firmware/exynos7885_acpm_fvp.fw
+
+	#VENDOR FILES
+	cd "$srcdir/firmware-samsung-gta3xlwifi-$_commit/firmware/"
+	install -Dm644 APBargeIn_AUDIO_SLSI.bin \
+		"$pkgdir"/usr/lib/firmware/postmarketos/APBargeIn_AUDIO_SLSI.bin
+	install -Dm644 AP_AUDIO_SLSI.bin \
+		"$pkgdir"/usr/lib/firmware/postmarketos/AP_AUDIO_SLSI.bin
+	install -Dm644 calliope_dram.bin \
+		"$pkgdir"/usr/lib/firmware/postmarketos/calliope_dram.bin
+	install -Dm644 calliope_sram.bin \
+		"$pkgdir"/usr/lib/firmware/postmarketos/calliope_sram.bin
+	install -Dm644 fimc_is_lib.bin \
+		"$pkgdir"/usr/lib/firmware/postmarketos/fimc_is_lib.bin
+	install -Dm644 fimc_is_rta.bin \
+		"$pkgdir"/usr/lib/firmware/postmarketos/fimc_is_rta.bin
+	install -Dm644 mfc_fw.bin \
+		"$pkgdir"/usr/lib/firmware/postmarketos/mfc_fw.bin
+	install -Dm644 setfile_4ha.bin \
+		"$pkgdir"/usr/lib/firmware/postmarketos/setfile_4ha.bin
+	install -Dm644 setfile_5e9.bin \
+		"$pkgdir"/usr/lib/firmware/postmarketos/setfile_5e9.bin
+	install -Dm644 Tfa9896.cnt \
+		"$pkgdir"/usr/lib/firmware/postmarketos/Tfa9896.cnt
+
+	#WIFI FIRMWARE
+	cd "$srcdir/firmware-samsung-gta3xlwifi-$_commit/etc/wifi/"
+	install -Dm644 mx \
+		"$pkgdir"/usr/lib/firmware/postmarketos/mx140/mx
+	install -Dm644 mx140.bin \
+		"$pkgdir"/usr/lib/firmware/postmarketos/mx140/mx140.bin
+	install -Dm644 mx140_bt.hcf \
+		"$pkgdir"/usr/lib/firmware/postmarketos/mx140/mx140_bt.hcf
+	install -Dm644 mx140_wlan.hcf \
+		"$pkgdir"/usr/lib/firmware/postmarketos/mx140/mx140_wlan.hcf
+	install -Dm644 mx140_wlan_t.hcf \
+		"$pkgdir"/usr/lib/firmware/postmarketos/mx140/mx140_wlan_t.hcf
+}
+
+sha512sums="
+e254a8d1e89051c554992715c40a7f8f4328f2c9734ffa08e00c28fb81753eb8cfe238487b0dd4c4e25d55a8902c7618a2090465449a13d7146f09afb7d03600  firmware-samsung-gta3xlwifi-17c9677aece174b91e4d28cd9c2dd30578b70e4f.tar.gz
+91e6713f952258d738e9980882198b2705dafda8e9c6638f1c7e771b37a2a54cc339b9dd5b6687780714184770575e8428f37351919bebf2344499edc0632977  exynos7885_acpm_fvp.fw
+"

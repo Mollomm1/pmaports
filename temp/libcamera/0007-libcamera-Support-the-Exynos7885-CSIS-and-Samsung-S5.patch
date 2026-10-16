@@ -1,0 +1,116 @@
+From 131dc7e6db28564118840fdb1fc7e26e8c51005e Mon Sep 17 00:00:00 2001
+From: Mollomm1 <68751598+Mollomm1@users.noreply.github.com>
+Date: Fri, 16 Oct 2026 16:57:30 +0200
+Subject: [PATCH] libcamera: Support the Exynos7885 CSIS and Samsung
+ S5K4HA/S5K5E9
+
+The Samsung Galaxy Tab A 10.1 (2019, SM-T510) captures raw Bayer frames
+through the CSIS v5 receivers of its Exynos7885 SoC (kernel driver
+exynos7885-csis), from an S5K4HA rear and an S5K5E9 front sensor.
+
+- simple: handle exynos7885-csis with the software ISP.
+- Add sensor helpers: linear analogue gain with 0x20 = 1x and a black
+  level of 64 at 10 bits, measured on the device.
+- Add sensor properties: 1.12 um pixels and the CCS test patterns the
+  s5k-smia kernel driver exposes.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/ipa/libipa/camera_sensor_helper.cpp       | 24 ++++++++++++++
+ src/libcamera/pipeline/simple/simple.cpp      |  1 +
+ .../sensor/camera_sensor_properties.cpp       | 32 +++++++++++++++++++
+ 3 files changed, 57 insertions(+)
+
+diff --git a/src/ipa/libipa/camera_sensor_helper.cpp b/src/ipa/libipa/camera_sensor_helper.cpp
+index bb95700..bece515 100644
+--- a/src/ipa/libipa/camera_sensor_helper.cpp
++++ b/src/ipa/libipa/camera_sensor_helper.cpp
+@@ -839,6 +839,30 @@ public:
+ };
+ REGISTER_CAMERA_SENSOR_HELPER("ov13858", CameraSensorHelperOv13858)
+ 
++class CameraSensorHelperS5k4ha : public CameraSensorHelper
++{
++public:
++	CameraSensorHelperS5k4ha()
++	{
++		/* Measured: 64 at 10 bits. */
++		blackLevel_ = 4096;
++		gain_ = AnalogueGainLinear{ 1, 0, 0, 32 };
++	}
++};
++REGISTER_CAMERA_SENSOR_HELPER("s5k4ha", CameraSensorHelperS5k4ha)
++
++class CameraSensorHelperS5k5e9 : public CameraSensorHelper
++{
++public:
++	CameraSensorHelperS5k5e9()
++	{
++		/* Measured: 64 at 10 bits. */
++		blackLevel_ = 4096;
++		gain_ = AnalogueGainLinear{ 1, 0, 0, 32 };
++	}
++};
++REGISTER_CAMERA_SENSOR_HELPER("s5k5e9", CameraSensorHelperS5k5e9)
++
+ class CameraSensorHelperVd55g1 : public CameraSensorHelper
+ {
+ public:
+diff --git a/src/libcamera/pipeline/simple/simple.cpp b/src/libcamera/pipeline/simple/simple.cpp
+index e26f438..6bb17d0 100644
+--- a/src/libcamera/pipeline/simple/simple.cpp
++++ b/src/libcamera/pipeline/simple/simple.cpp
+@@ -257,6 +257,7 @@ namespace {
+ 
+ static const SimplePipelineInfo supportedDevices[] = {
+ 	{ "dcmipp", {}, false },
++	{ "exynos7885-csis", {}, true },
+ 	{ "imx7-csi", { { "pxp", 1 } }, true },
+ 	{ "intel-ipu6", {}, true },
+ 	{ "intel-ipu7", {}, true },
+diff --git a/src/libcamera/sensor/camera_sensor_properties.cpp b/src/libcamera/sensor/camera_sensor_properties.cpp
+index cbe55bc..679098b 100644
+--- a/src/libcamera/sensor/camera_sensor_properties.cpp
++++ b/src/libcamera/sensor/camera_sensor_properties.cpp
+@@ -519,6 +519,38 @@ const CameraSensorProperties *CameraSensorProperties::get(const std::string &sen
+ 			},
+ 			.sensorDelays = { },
+ 		} },
++		{ "s5k4ha", {
++			.unitCellSize = { 1120, 1120 },
++			.testPatternModes = {
++				{ controls::draft::TestPatternModeOff, 0 },
++				{ controls::draft::TestPatternModeSolidColor, 1 },
++				{ controls::draft::TestPatternModeColorBars, 2 },
++				{ controls::draft::TestPatternModeColorBarsFadeToGray, 3 },
++				{ controls::draft::TestPatternModePn9, 4 },
++			},
++			.sensorDelays = {
++				.exposureDelay = 2,
++				.gainDelay = 2,
++				.vblankDelay = 2,
++				.hblankDelay = 2
++			},
++		} },
++		{ "s5k5e9", {
++			.unitCellSize = { 1120, 1120 },
++			.testPatternModes = {
++				{ controls::draft::TestPatternModeOff, 0 },
++				{ controls::draft::TestPatternModeSolidColor, 1 },
++				{ controls::draft::TestPatternModeColorBars, 2 },
++				{ controls::draft::TestPatternModeColorBarsFadeToGray, 3 },
++				{ controls::draft::TestPatternModePn9, 4 },
++			},
++			.sensorDelays = {
++				.exposureDelay = 2,
++				.gainDelay = 2,
++				.vblankDelay = 2,
++				.hblankDelay = 2
++			},
++		} },
+ 		{ "vd55g1", {
+ 			.unitCellSize = { 2160, 2160 },
+ 			.testPatternModes = {
+-- 
+2.43.0
+

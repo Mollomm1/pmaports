@@ -1,0 +1,14 @@
+[Unit]
+Description=Start Samsung WLBT firmware and hand Wi-Fi to NetworkManager
+Requires=gta3xlwifi-wifibt.service
+Wants=NetworkManager.service bluetooth.service
+After=gta3xlwifi-wifibt.service NetworkManager.service bluetooth.service systemd-rfkill.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/gta3xlwifi/wifibt-networkmanager start
+TimeoutSec=90
+
+[Install]
+WantedBy=multi-user.target

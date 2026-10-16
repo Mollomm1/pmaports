@@ -1,0 +1,16 @@
+#!/sbin/openrc-run
+
+description="Prepare and start Samsung Exynos WLBT"
+
+depend() {
+	need localmount
+	before wpa_supplicant networkmanager bluetooth
+}
+
+start() {
+	/usr/libexec/gta3xlwifi/wifibt start
+}
+
+stop() {
+	/usr/libexec/gta3xlwifi/wifibt stop
+}

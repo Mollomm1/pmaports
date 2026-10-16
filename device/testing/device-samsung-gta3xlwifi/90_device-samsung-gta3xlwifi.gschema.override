@@ -1,0 +1,16 @@
+# The tablet stays on and unlocked while idle: no screen blanking, no lock
+# screen, no idle suspend. Phosh sets its own idle delay for its desktop, so
+# override that variant too.
+[org.gnome.desktop.session]
+idle-delay=uint32 0
+
+[org.gnome.desktop.session:Phosh]
+idle-delay=uint32 0
+
+[org.gnome.desktop.screensaver]
+lock-enabled=false
+idle-activation-enabled=false
+
+[org.gnome.settings-daemon.plugins.power]
+sleep-inactive-ac-type='nothing'
+sleep-inactive-battery-type='nothing'

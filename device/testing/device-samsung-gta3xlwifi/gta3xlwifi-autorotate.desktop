@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Screen auto-rotation
+Comment=Rotate the screen and touchscreen with the tablet
+Exec=gta3xlwifi-autorotate
+OnlyShowIn=XFCE;
+NoDisplay=true

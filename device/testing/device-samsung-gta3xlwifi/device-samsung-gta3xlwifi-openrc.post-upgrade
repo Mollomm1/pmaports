@@ -1,0 +1,6 @@
+#!/bin/sh
+
+rc-update add wifibt default
+rc-update add wifibt-networkmanager default
+rc-update del hwclock boot || true
+rc-update add swclock boot

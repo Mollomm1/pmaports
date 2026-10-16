@@ -1,0 +1,3 @@
+#!/bin/sh
+# See /usr/libexec/gta3xlwifi/kwin-rt.
+exec /usr/libexec/gta3xlwifi/kwin-rt

@@ -1,0 +1,210 @@
+# Forked from Alpine edge main/mesa (26.2.4) for postmarketOS v25.12 on
+# samsung-gta3xlwifi: newer Panfrost for the Mali-G71, built against v3.23's
+# LLVM 21 and trimmed to the drivers this aarch64 tablet can use.
+# A snapshot of Mesa main (26.3.0-devel): PanVK exposes Vulkan 1.3 on Bifrost
+# there ("panvk: expose vulkan 1.3 on bifrost", ba09d293), not in 26.2.x.
+pkgname=mesa
+pkgver=26.3.0_git20261014
+_commit=d44453ce07ba5e1e6b71f7960809c38f2526c1cd
+pkgrel=3
+pkgdesc="Mesa DRI OpenGL library"
+url="https://www.mesa3d.org"
+arch="aarch64"
+license="MIT AND SGI-B-2.0 AND BSL-1.0"
+subpackages="
+	$pkgname-dev
+	$pkgname-dri-gallium:_gallium
+	$pkgname-egl
+	$pkgname-gl
+	$pkgname-gles
+	$pkgname-gbm
+	$pkgname-vulkan-panfrost:_vulkan
+	$pkgname-vulkan-swrast:_vulkan
+	"
+_llvmver=23
+depends_dev="
+	libdrm-dev
+	libxdamage-dev
+	libxshmfence-dev
+	"
+# Panfrost compiles its internal shaders with mesa_clc, hence clang/libclc
+# and the SPIR-V translator.
+makedepends="
+	$depends_dev
+	binutils
+	bison
+	clang$_llvmver-dev
+	elfutils-dev
+	eudev-dev
+	expat-dev
+	findutils
+	flex
+	gettext
+	glslang-dev
+	libclc-dev~$_llvmver
+	libdisplay-info-dev
+	libtool
+	libx11-dev
+	libxfixes-dev
+	libxml2-dev
+	libxrandr-dev
+	libxxf86vm-dev
+	llvm$_llvmver-dev
+	meson
+	py3-cparser
+	py3-mako
+	py3-packaging
+	py3-ply
+	py3-yaml
+	python3
+	spirv-llvm-translator-dev
+	vulkan-loader-dev
+	wayland-dev
+	wayland-protocols
+	xorgproto
+	zlib-dev
+	zstd-dev
+	"
+source="mesa-$_commit.tar.gz::https://gitlab.freedesktop.org/mesa/mesa/-/archive/$_commit/mesa-$_commit.tar.gz
+	0001-dril-add-simpledrm-to-the-kmsro-drivers.patch
+	0002-dril-add-exynos7885-dpu-to-the-kmsro-drivers.patch
+	0003-panfrost-compute-derivatives-without-cross-lane-reads-on-G71.patch
+	"
+builddir="$srcdir/mesa-$_commit"
+options="!check"
+
+_dri_driverdir=/usr/lib/dri
+_gallium_drivers="panfrost,llvmpipe,softpipe"
+_vulkan_drivers="panfrost,swrast"
+
+prepare() {
+	default_prepare
+
+	# main calls itself 26.3.0-devel; abuild rejects that version in the
+	# installed pkg-config files.
+	sed -i 's/-devel$//' VERSION
+}
+
+build() {
+	# use -g1 to generate less debug info
+	export CFLAGS="$CFLAGS -O2 -g1"
+	export CXXFLAGS="$CXXFLAGS -O2 -g1"
+	export CPPFLAGS="$CPPFLAGS -O2 -g1"
+
+	PATH="$PATH:/usr/lib/llvm$_llvmver/bin" \
+	abuild-meson \
+		-Db_ndebug=true \
+		-Db_lto=false \
+		-Dallow-kcmp=enabled \
+		-Dexpat=enabled \
+		-Dshader-cache=enabled \
+		-Dxlib-lease=enabled \
+		-Dxmlconfig=enabled \
+		-Dzstd=enabled \
+		-Dbackend_max_links=2 \
+		-Dbuild-tests=false \
+		-Ddri-drivers-path=$_dri_driverdir \
+		-Dgallium-drivers=$_gallium_drivers \
+		-Dvulkan-drivers=$_vulkan_drivers \
+		-Dvulkan-layers= \
+		-Dplatforms=x11,wayland \
+		-Dllvm=enabled \
+		-Dshared-llvm=enabled \
+		-Dgbm=enabled \
+		-Dglx=dri \
+		-Dopengl=true \
+		-Dgles1=enabled \
+		-Dgles2=enabled \
+		-Degl=enabled \
+		-Dgallium-extra-hud=true \
+		-Dgallium-rusticl=false \
+		-Dgallium-va=disabled \
+		-Dvideo-codecs= \
+		. output
+
+	# Print config
+	meson configure --no-pager output
+
+	meson compile -C output
+}
+
+package() {
+	DESTDIR="$pkgdir" meson install --no-rebuild -C output
+}
+
+egl() {
+	pkgdesc="Mesa libEGL runtime libraries"
+	# gles is not directly needed but GTK+mesa throws errors when egl
+	# is installed without gles
+	# https://gitlab.alpinelinux.org/alpine/aports/-/issues/15510#note_531887
+	depends="mesa=$pkgver-r$pkgrel mesa-gles=$pkgver-r$pkgrel"
+
+	amove usr/lib/libEGL.so*
+}
+
+gl() {
+	pkgdesc="Mesa libGL runtime libraries"
+	depends="mesa=$pkgver-r$pkgrel"
+
+	amove usr/lib/libGL.so*
+}
+
+gles() {
+	pkgdesc="Mesa libGLESv2 runtime libraries"
+	depends="mesa=$pkgver-r$pkgrel"
+
+	amove usr/lib/libGLES*.so*
+}
+
+gbm() {
+	pkgdesc="Mesa gbm library"
+	depends="mesa=$pkgver-r$pkgrel"
+
+	amove usr/lib/libgbm.so.*
+}
+
+# Move links referencing the same file to the subpackage.
+# Usage: _mv_links <base directory> <example>
+# where <example> is one of the libraries covered by the megadriver.
+# The example is used to find other links that point to the same file.
+_mv_links() {
+	install -d "$subpkgdir"/$1
+	find -L "$pkgdir"/$1 -samefile "$pkgdir"/$1/$2 -print0 \
+		| xargs -0 -I{} mv {} "$subpkgdir"/$1/
+}
+
+_mv_vulkan() {
+	local i
+	for i in "$@"; do
+		amove usr/lib/libvulkan_$i*.so
+		amove usr/share/vulkan/icd.d/${i}_*.*
+	done
+}
+
+_gallium() {
+	pkgdesc="Mesa gallium DRI drivers"
+	depends="mesa=$pkgver-r$pkgrel"
+
+	# libdril_dri.so and its per-driver links
+	_mv_links $_dri_driverdir swrast_dri.so
+}
+
+_vulkan() {
+	local n=${subpkgname##*-vulkan-}
+	pkgdesc="Mesa Vulkan API driver for $n"
+	depends="mesa=$pkgver-r$pkgrel"
+
+	case $n in
+	panfrost)
+		_mv_vulkan panfrost ;;
+	swrast)
+		_mv_vulkan lvp ;;
+	esac
+}
+
+sha512sums="
+86e45806268d32452cd9a9f9f8610d433ca3803d32e5d1b043ec2544f138c6972b8697cbf23a61cc9b2e3b82032e9a6094e8c387053c3b872a409f61a3519d6c  mesa-d44453ce07ba5e1e6b71f7960809c38f2526c1cd.tar.gz
+0ced7587636e277f7c4e85d60ef728a897cc3022006a8d3e9c04d0fa516d4ba51d8ddb3947eb12aeea265e79c4388cff8e23b11cc48a06095a3f56849db57f26  0001-dril-add-simpledrm-to-the-kmsro-drivers.patch
+71be74adcdf42ae3be39130ed3e5d543e71b5e153949430e11e920553c26205ec06b635fe422db2a941ab89a68b850abef6eebd3970cdbeaac57beb8bbfa536b  0002-dril-add-exynos7885-dpu-to-the-kmsro-drivers.patch
+a1266a786de9a08d3ee93c5a7c478f6ff9165b308492f5ce7c9ffd5f7255870cc192596dbe265f603216b042ec94e80bbd9dccb50935da6c2242dad572b20abb  0003-panfrost-compute-derivatives-without-cross-lane-reads-on-G71.patch
+"

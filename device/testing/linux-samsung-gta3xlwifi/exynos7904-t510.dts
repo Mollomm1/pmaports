@@ -1,0 +1,1157 @@
+// SPDX-License-Identifier: GPL-2.0
+/dts-v1/;
+#include "exynos7885.dtsi"
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/input/input.h>
+#include <dt-bindings/interrupt-controller/irq.h>
+#include <dt-bindings/soc/samsung,exynos-usi.h>
+
+/ {
+	model = "Samsung Galaxy Tab A 10.1 (2019)";
+	compatible = "samsung,t510", "samsung,exynos7885";
+	chassis-type = "handset";
+
+	aliases {
+		mmc0 = &mmc_0;
+		mmc2 = &mmc_2;
+	};
+
+	chosen {
+		#address-cells = <2>;
+		#size-cells = <1>;
+		ranges;
+		
+		bootargs = "pmos.nosplash exynos7885.dispaud=1 cma=128M";
+
+		/* The bootloader loads the boot.img ramdisk at 0x89000000, and
+		 * uniLoader copies the kernel to 0x90000000. The archive's real
+		 * size is not passed on, so give the initramfs everything up to
+		 * 0x8c000000 (48 MiB): a shorter window truncates it, and /init
+		 * then fails on a missing file. Bytes after the archive only log
+		 * "Initramfs unpacking failed".
+		 */
+		linux,initrd-start = <0x89000000>;
+		linux,initrd-end = <0x8c000000>;
+
+		stdout-path = "fb0";
+
+		fb0: framebuffer@ec000000 {
+			compatible = "simple-framebuffer";
+			reg = <0x0 0xec000000 (1200 * 1920 * 4)>;
+			width = <1200>;
+			height = <1920>;
+			stride = <(1200 * 4)>;
+			/* DECON ignores the alpha byte (checked on the panel), and
+			 * matching X's XRGB8888 makes simpledrm's updates a memcpy.
+			 */
+			format = "x8r8g8b8";
+		};
+	};
+
+	wifibt@120c0000 {
+		compatible = "samsung,exynos7885-wifibt";
+		reg = <0x0 0x120c0000 0x180>, <0x0 0x120e0000 0x180>,
+		      <0x0 0x12080000 0x180>;
+		reg-names = "r4", "m4", "cp";
+		interrupts = <GIC_SPI 57 IRQ_TYPE_LEVEL_HIGH>,
+			     <GIC_SPI 21 IRQ_TYPE_LEVEL_HIGH>,
+			     <GIC_SPI 286 IRQ_TYPE_LEVEL_HIGH>;
+		interrupt-names = "mbox", "alive", "watchdog";
+		samsung,pmu-syscon = <&pmu_system_controller>;
+		memory-region = <&wifibt_if>;
+	};
+
+	battery: battery {
+		compatible = "simple-battery";
+		/* 4.35 V pack; initial bring-up limits charge current to 1 A. */
+		constant-charge-voltage-max-microvolt = <4350000>;
+		constant-charge-current-max-microamp = <1000000>;
+		charge-term-current-microamp = <200000>;
+	};
+
+	reserved-memory {
+		#address-cells = <2>;
+		#size-cells = <1>;
+		ranges;
+
+		/* Exynos Characteristic Table left by the bootloader: per-chip
+		 * DVFS voltage tables, kept for the GPU/CPU DVFS work.
+		 */
+		ect@90000000 {
+			reg = <0x0 0x90000000 0x19000>;
+			no-map;
+		};
+
+		/* The bootloader framebuffer. The DPU keeps scanning it out
+		 * after its System MMU is enabled, so it is identity-mapped.
+		 */
+		fb_region: framebuffer_region@ec000000 {
+			reg = <0x0 0xec000000 (1200 * 1920 * 4)>;
+			iommu-addresses = <&dpu 0xec000000 (1200 * 1920 * 4)>;
+			no-map;
+		};
+
+		wifibt_if: memory@e9000000 {
+			reg = <0x0 0xe9000000 0x400000>;
+			no-map;
+		};
+
+		abox_rmem: memory@e9400000 {
+			reg = <0x0 0xe9400000 0xc00000>;
+			no-map;
+		};
+
+		/* 128 KiB fixed ABOX RDMA0 playback ring. */
+		abox_pcm_rmem: memory@ea000000 {
+			reg = <0x0 0xea000000 0x20000>;
+			no-map;
+		};
+
+		ramoops@c0000000 {
+                    #address-cells = <2>;
+                    #size-cells = <1>;
+                    compatible = "ramoops";
+                    reg = <0x00000000 0xc0000000 0x00100000>; // 1MB at 0xc0000000
+                    record-size = <0x10000>;  // 64KB per record
+                    console-size = <0x10000>; // 64KB for console logs
+                    pmsg-size = <0x1000>;     // 4KB for user messages
+                };
+
+	};
+	
+	/* TODO: Remove this once PMIC is implemented  */
+	reg_dummy: regulator-0 {
+		compatible = "regulator-fixed";
+		regulator-name = "dummy_reg";
+	};
+	
+
+	memory@80000000 {
+		device_type = "memory";
+		reg = <0x0 0x80000000 0x3bc00000>,
+		      <0x0 0xc0000000 0x40000000>;
+	};
+
+	/* Same key wiring as the vendor T510 DT (and jackpotlte). */
+	gpio-keys {
+		compatible = "gpio-keys";
+		pinctrl-names = "default";
+		pinctrl-0 = <&key_volup &key_voldown &key_power>;
+
+		volup-key {
+			label = "Volume Up";
+			linux,code = <KEY_VOLUMEUP>;
+			gpios = <&gpa1 5 GPIO_ACTIVE_LOW>;
+		};
+
+		voldown-key {
+			label = "Volume Down";
+			linux,code = <KEY_VOLUMEDOWN>;
+			gpios = <&gpa1 6 GPIO_ACTIVE_LOW>;
+		};
+
+		power-key {
+			label = "Power";
+			linux,code = <KEY_POWER>;
+			gpios = <&gpa1 7 GPIO_ACTIVE_LOW>;
+			wakeup-source;
+		};
+	};
+
+	tsp_avdd: tsp_avdd {
+		compatible = "regulator-fixed";
+		regulator-name = "tsp_avdd";
+		regulator-min-microvolt = <3300000>;
+		regulator-max-microvolt = <3300000>;
+		gpio = <&gpg3 2 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+		regulator-boot-on;
+		startup-delay-us = <100000>;
+	};
+
+	tsp_dvdd: tsp_dvdd {
+		compatible = "regulator-fixed";
+		regulator-name = "tsp_dvdd";
+		regulator-min-microvolt = <1800000>;
+		regulator-max-microvolt = <1800000>;
+		gpio = <&gpg3 3 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+		regulator-boot-on;
+		startup-delay-us = <100000>;
+	};
+
+	/* Camera supplies, all switched by GPIOs (Samsung's power sequence) */
+	cam_vio: regulator-cam-vio {
+		compatible = "regulator-fixed";
+		regulator-name = "cam_vio_1v8";
+		regulator-min-microvolt = <1800000>;
+		regulator-max-microvolt = <1800000>;
+		gpio = <&gpg3 0 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+	};
+
+	rcam_vana: regulator-rcam-vana {
+		compatible = "regulator-fixed";
+		regulator-name = "rcam_vana_2v8";
+		regulator-min-microvolt = <2800000>;
+		regulator-max-microvolt = <2800000>;
+		gpio = <&gpg2 3 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+	};
+
+	rcam_vdig: regulator-rcam-vdig {
+		compatible = "regulator-fixed";
+		regulator-name = "rcam_vdig";
+		regulator-min-microvolt = <1050000>;
+		regulator-max-microvolt = <1050000>;
+		gpio = <&gpp6 4 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+	};
+
+	rcam_vaf: regulator-rcam-vaf {
+		compatible = "regulator-fixed";
+		regulator-name = "rcam_vaf_2v8";
+		regulator-min-microvolt = <2800000>;
+		regulator-max-microvolt = <2800000>;
+		gpio = <&gpg2 2 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+	};
+
+	fcam_vdig: regulator-fcam-vdig {
+		compatible = "regulator-fixed";
+		regulator-name = "fcam_vdig_1v2";
+		regulator-min-microvolt = <1200000>;
+		regulator-max-microvolt = <1200000>;
+		gpio = <&gpg2 4 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+	};
+
+	fcam_vana: regulator-fcam-vana {
+		compatible = "regulator-fixed";
+		regulator-name = "fcam_vana_2v8";
+		regulator-min-microvolt = <2800000>;
+		regulator-max-microvolt = <2800000>;
+		gpio = <&gpg2 5 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+	};
+};
+
+
+&abox {
+	status = "okay";
+	memory-region = <&abox_rmem>, <&abox_pcm_rmem>;
+	/* Stock bootargs; vss=0: no modem voice buffer on this WiFi model. */
+	samsung,bootargs = "init=ab0x vss=0";
+	samsung,bootargs-offset = <0x22e00>;
+	pinctrl-names = "active", "idle";
+	pinctrl-0 = <&aud_codec_mclk &aud_codec_bus &aud_spk_bus &aud_loopback_bus>;
+	pinctrl-1 = <&aud_codec_mclk_idle &aud_codec_bus_idle &aud_spk_bus_idle &aud_loopback_bus_idle>;
+
+	abox_audio: abox-audio {
+		compatible = "samsung,exynos7885-abox-audio";
+		/* DAI 0: UAIF3 (speaker amps), DAI 1: UAIF0 (headphone codec) */
+		#sound-dai-cells = <1>;
+		status = "okay";
+	};
+
+	firmware-ap-audio {
+		status = "okay";
+		samsung,name = "postmarketos/AP_AUDIO_SLSI.bin";
+		samsung,area = <1>;
+		samsung,offset = <0x7f0000>;
+	};
+
+	firmware-ap-barge-in {
+		status = "okay";
+		samsung,name = "postmarketos/APBargeIn_AUDIO_SLSI.bin";
+		samsung,area = <1>;
+		samsung,offset = <0x7ec000>;
+	};
+};
+
+/* This image opts into DISPAUD clock registration through its kernel cmdline.
+ * ABOX registration and firmware execution remain separately module-gated.
+ */
+&pd_dispaud {
+	status = "okay";
+};
+
+&cmu_dispaud {
+	status = "okay";
+};
+
+&sysmmu_abox {
+	status = "okay";
+};
+
+&sysmmu_dpu {
+	status = "okay";
+};
+
+/* The Mali-G71 scales between the OPPs below on PLL_G3D, with vdd_g3d set
+ * over ACPM. The CMU_TOP switching clock (799.5 MHz / 2) carries the GPU
+ * while PLL_G3D relocks.
+ */
+&pd_g3d {
+	status = "okay";
+};
+
+/* HX8279D panel in DSI video mode, as the bootloader programs it. */
+&dpu {
+	memory-region = <&fb_region>;
+	status = "okay";
+
+	panel-timing {
+		/* 1400 x 1964 total at 60 Hz */
+		clock-frequency = <164976000>;
+		hactive = <1200>;
+		vactive = <1920>;
+		hfront-porch = <150>;
+		hback-porch = <40>;
+		hsync-len = <10>;
+		vfront-porch = <22>;
+		vback-porch = <18>;
+		vsync-len = <4>;
+	};
+};
+
+&dsi {
+	status = "okay";
+
+	panel: panel@0 {
+		compatible = "samsung,gta3xl-hx8279d";
+		reg = <0>;
+		reset-gpios = <&gpg1 7 GPIO_ACTIVE_LOW>;
+		ldo-gpios = <&gpg2 6 GPIO_ACTIVE_HIGH>;
+		buck-gpios = <&gpg2 7 GPIO_ACTIVE_HIGH>;
+
+		port {
+			panel_in: endpoint {
+				remote-endpoint = <&dsi_out>;
+			};
+		};
+	};
+};
+
+&dsi_out_port {
+	dsi_out: endpoint {
+		remote-endpoint = <&panel_in>;
+	};
+};
+
+&cmu_g3d {
+	/* Set before the GPU switches onto this path. */
+	assigned-clocks = <&cmu_top CLK_DOUT_G3D_SWITCH>;
+	assigned-clock-rates = <399750000>;
+	status = "okay";
+};
+
+&gpu {
+	/*
+	 * Run from PLL_G3D (left at 343 MHz by the bootloader); the switching
+	 * clock stays set up for parking the GPU while the PLL relocks.
+	 */
+	assigned-clocks = <&cmu_g3d CLK_MOUT_G3D_SWITCH_USER>,
+			  <&cmu_g3d CLK_MOUT_G3D_PLL>,
+			  <&cmu_g3d CLK_MOUT_G3D_BUSD>,
+			  <&cmu_g3d CLK_FOUT_G3D_PLL>;
+	assigned-clock-parents = <&cmu_top CLK_DOUT_G3D_SWITCH>,
+				 <&cmu_g3d CLK_FOUT_G3D_PLL>,
+				 <&cmu_g3d CLK_MOUT_G3D_PLL>,
+				 <0>;
+	assigned-clock-rates = <0>, <0>, <0>, <343000000>;
+	mali-supply = <&vdd_g3d>;
+	operating-points-v2 = <&gpu_opp_table>;
+	status = "okay";
+};
+
+/*
+ * CPU DVFS levels from the bootloader's ECT. Voltages are this chip's:
+ * ASV group 7, the highest over all ECT table versions plus 25 mV, as for
+ * the GPU. Both A53 clusters share BUCK3, so their levels give a range up
+ * to the rail's limit and the regulator follows the higher request.
+ *
+ * A level change restarts the cluster PLL and sends the voltage over ACPM,
+ * whose firmware may take up to 2 ms to answer. The latency also sets the
+ * schedutil rate limit (1.5 times it); at 100 us the A53s changed level
+ * about 200 times a second under desktop load.
+ */
+/ {
+	cpucl0_opp_table: opp-table-cpucl0 {
+		compatible = "operating-points-v2";
+		opp-shared;
+
+		opp-936000000 {
+			opp-hz = /bits/ 64 <936000000>;
+			opp-microvolt = <750000 750000 1050000>;
+			clock-latency-ns = <2000000>;
+		};
+
+		opp-1144000000 {
+			opp-hz = /bits/ 64 <1144000000>;
+			opp-microvolt = <806250 806250 1050000>;
+			clock-latency-ns = <2000000>;
+		};
+
+		opp-1352000000 {
+			opp-hz = /bits/ 64 <1352000000>;
+			opp-microvolt = <875000 875000 1050000>;
+			clock-latency-ns = <2000000>;
+		};
+
+		opp-1560000000 {
+			opp-hz = /bits/ 64 <1560000000>;
+			opp-microvolt = <943750 943750 1050000>;
+			clock-latency-ns = <2000000>;
+		};
+
+		opp-1664000000 {
+			opp-hz = /bits/ 64 <1664000000>;
+			opp-microvolt = <987500 987500 1050000>;
+			clock-latency-ns = <2000000>;
+		};
+
+		opp-1768000000 {
+			opp-hz = /bits/ 64 <1768000000>;
+			opp-microvolt = <1031250 1031250 1050000>;
+			clock-latency-ns = <2000000>;
+		};
+	};
+
+	cpucl1_opp_table: opp-table-cpucl1 {
+		compatible = "operating-points-v2";
+		opp-shared;
+
+		opp-546000000 {
+			opp-hz = /bits/ 64 <546000000>;
+			opp-microvolt = <687500 687500 1050000>;
+			clock-latency-ns = <2000000>;
+		};
+
+		opp-676000000 {
+			opp-hz = /bits/ 64 <676000000>;
+			opp-microvolt = <725000 725000 1050000>;
+			clock-latency-ns = <2000000>;
+		};
+
+		opp-1014000000 {
+			opp-hz = /bits/ 64 <1014000000>;
+			opp-microvolt = <818750 818750 1050000>;
+			clock-latency-ns = <2000000>;
+		};
+
+		opp-1144000000 {
+			opp-hz = /bits/ 64 <1144000000>;
+			opp-microvolt = <862500 862500 1050000>;
+			clock-latency-ns = <2000000>;
+		};
+
+		opp-1248000000 {
+			opp-hz = /bits/ 64 <1248000000>;
+			opp-microvolt = <900000 900000 1050000>;
+			clock-latency-ns = <2000000>;
+		};
+
+		opp-1352000000 {
+			opp-hz = /bits/ 64 <1352000000>;
+			opp-microvolt = <925000 925000 1050000>;
+			clock-latency-ns = <2000000>;
+		};
+
+		opp-1482000000 {
+			opp-hz = /bits/ 64 <1482000000>;
+			opp-microvolt = <981250 981250 1050000>;
+			clock-latency-ns = <2000000>;
+		};
+
+		opp-1586000000 {
+			opp-hz = /bits/ 64 <1586000000>;
+			opp-microvolt = <1037500 1037500 1050000>;
+			clock-latency-ns = <2000000>;
+		};
+	};
+
+	cpucl2_opp_table: opp-table-cpucl2 {
+		compatible = "operating-points-v2";
+		opp-shared;
+
+		opp-546000000 {
+			opp-hz = /bits/ 64 <546000000>;
+			opp-microvolt = <687500 687500 1050000>;
+			clock-latency-ns = <2000000>;
+		};
+
+		opp-676000000 {
+			opp-hz = /bits/ 64 <676000000>;
+			opp-microvolt = <725000 725000 1050000>;
+			clock-latency-ns = <2000000>;
+		};
+
+		opp-1014000000 {
+			opp-hz = /bits/ 64 <1014000000>;
+			opp-microvolt = <818750 818750 1050000>;
+			clock-latency-ns = <2000000>;
+		};
+
+		opp-1144000000 {
+			opp-hz = /bits/ 64 <1144000000>;
+			opp-microvolt = <862500 862500 1050000>;
+			clock-latency-ns = <2000000>;
+		};
+
+		opp-1248000000 {
+			opp-hz = /bits/ 64 <1248000000>;
+			opp-microvolt = <900000 900000 1050000>;
+			clock-latency-ns = <2000000>;
+		};
+
+		opp-1352000000 {
+			opp-hz = /bits/ 64 <1352000000>;
+			opp-microvolt = <925000 925000 1050000>;
+			clock-latency-ns = <2000000>;
+		};
+
+		opp-1482000000 {
+			opp-hz = /bits/ 64 <1482000000>;
+			opp-microvolt = <981250 981250 1050000>;
+			clock-latency-ns = <2000000>;
+		};
+
+		opp-1586000000 {
+			opp-hz = /bits/ 64 <1586000000>;
+			opp-microvolt = <1037500 1037500 1050000>;
+			clock-latency-ns = <2000000>;
+		};
+	};
+
+	/* S2MPU08 BUCK2 and BUCK3, voltage set over ACPM */
+	vdd_cpucl0: regulator-vdd-cpucl0 {
+		compatible = "samsung,s2mpu08-acpm-buck2";
+		samsung,acpm-ipc = <&acpm_ipc 2>;
+		regulator-name = "vdd_cpucl0";
+		regulator-min-microvolt = <700000>;
+		regulator-max-microvolt = <1050000>;
+	};
+
+	vdd_cpucl12: regulator-vdd-cpucl12 {
+		compatible = "samsung,s2mpu08-acpm-buck3";
+		samsung,acpm-ipc = <&acpm_ipc 2>;
+		regulator-name = "vdd_cpucl12";
+		regulator-min-microvolt = <650000>;
+		regulator-max-microvolt = <1050000>;
+	};
+
+	/* S2MPU08 LDO35 and LDO2, the SD card and SD card I/O supplies */
+	vmmc_sd: regulator-vmmc-sd {
+		compatible = "samsung,s2mpu08-acpm-ldo35";
+		samsung,acpm-ipc = <&acpm_ipc 2>;
+		regulator-name = "vmmc_sd";
+		regulator-min-microvolt = <3300000>;
+		regulator-max-microvolt = <3300000>;
+	};
+
+	vqmmc_sd: regulator-vqmmc-sd {
+		compatible = "samsung,s2mpu08-acpm-ldo2";
+		samsung,acpm-ipc = <&acpm_ipc 2>;
+		regulator-name = "vqmmc_sd";
+		regulator-min-microvolt = <1800000>;
+		regulator-max-microvolt = <3300000>;
+	};
+};
+
+&cpu0 {
+	cpu-supply = <&vdd_cpucl12>;
+	operating-points-v2 = <&cpucl1_opp_table>;
+};
+
+&cpu1 {
+	cpu-supply = <&vdd_cpucl12>;
+	operating-points-v2 = <&cpucl1_opp_table>;
+};
+
+&cpu2 {
+	cpu-supply = <&vdd_cpucl12>;
+	operating-points-v2 = <&cpucl1_opp_table>;
+};
+
+&cpu3 {
+	cpu-supply = <&vdd_cpucl12>;
+	operating-points-v2 = <&cpucl1_opp_table>;
+};
+
+&cpu4 {
+	cpu-supply = <&vdd_cpucl12>;
+	operating-points-v2 = <&cpucl2_opp_table>;
+};
+
+&cpu5 {
+	cpu-supply = <&vdd_cpucl12>;
+	operating-points-v2 = <&cpucl2_opp_table>;
+};
+
+&cpu6 {
+	cpu-supply = <&vdd_cpucl0>;
+	operating-points-v2 = <&cpucl0_opp_table>;
+};
+
+&cpu7 {
+	cpu-supply = <&vdd_cpucl0>;
+	operating-points-v2 = <&cpucl0_opp_table>;
+};
+
+/*
+ * While a cluster PLL relocks, run the cluster from the CMU_TOP switching
+ * clock instead of the 26 MHz oscillator. Each rate stays below the
+ * cluster's lowest OPP, so the voltage set for either level covers it:
+ * 533 MHz (PLL_SHARED0 / 3) for the A73s, as the vendor DVFS uses, and
+ * 399.75 MHz (SHARED0_DIV2 / 2) for the A53s.
+ */
+&cmu_cpucl0 {
+	assigned-clocks = <&cmu_top CLK_DOUT_CPUCL0_SWITCH>,
+			  <&cmu_cpucl0 CLK_MOUT_CPUCL_SWITCH_USER>;
+	assigned-clock-parents = <0>, <&cmu_top CLK_DOUT_CPUCL0_SWITCH>;
+	assigned-clock-rates = <533000000>, <0>;
+};
+
+&cmu_cpucl1 {
+	assigned-clocks = <&cmu_top CLK_DOUT_CPUCL1_SWITCH>,
+			  <&cmu_cpucl1 CLK_MOUT_CPUCL_SWITCH_USER>;
+	assigned-clock-parents = <0>, <&cmu_top CLK_DOUT_CPUCL1_SWITCH>;
+	assigned-clock-rates = <399750000>, <0>;
+};
+
+&cmu_cpucl2 {
+	assigned-clocks = <&cmu_top CLK_DOUT_CPUCL2_SWITCH>,
+			  <&cmu_cpucl2 CLK_MOUT_CPUCL_SWITCH_USER>;
+	assigned-clock-parents = <0>, <&cmu_top CLK_DOUT_CPUCL2_SWITCH>;
+	assigned-clock-rates = <399750000>, <0>;
+};
+
+/*
+ * GPU DVFS levels from the bootloader's ECT (PLL_G3D settings). Voltages
+ * are this chip's: ASV group 7, the highest over all ECT table versions
+ * plus 25 mV. Until the buck base was fixed these were set 200 mV lower,
+ * where 845 MHz faulted; at 875 mV it ran 6 minutes of GL and Vulkan load
+ * without faults.
+ */
+/ {
+	gpu_opp_table: opp-table-gpu {
+		compatible = "operating-points-v2";
+
+		opp-343000000 {
+			opp-hz = /bits/ 64 <343000000>;
+			opp-microvolt = <787500>;
+		};
+
+		opp-450000000 {
+			opp-hz = /bits/ 64 <450000000>;
+			opp-microvolt = <812500>;
+		};
+
+		opp-545000000 {
+			opp-hz = /bits/ 64 <545000000>;
+			opp-microvolt = <831250>;
+		};
+
+		opp-676000000 {
+			opp-hz = /bits/ 64 <676000000>;
+			opp-microvolt = <856250>;
+		};
+
+		opp-845000000 {
+			opp-hz = /bits/ 64 <845000000>;
+			opp-microvolt = <875000>;
+		};
+	};
+
+	/* S2MPU08 BUCK5, voltage set over ACPM; the PMU switches it on/off. */
+	vdd_g3d: regulator-vdd-g3d {
+		compatible = "samsung,s2mpu08-acpm-buck5";
+		samsung,acpm-ipc = <&acpm_ipc 2>;
+		regulator-name = "vdd_g3d";
+		regulator-min-microvolt = <750000>;
+		regulator-max-microvolt = <900000>;
+	};
+};
+
+
+/* Revision 4+ tablets have two TFA9896 speaker amplifiers on I2C3.
+ * Their driver probes read revision only; playback uses vendor CHSA=0 setup.
+ */
+&i2c_3 {
+	status = "okay";
+
+	amp_right: audio-codec@34 {
+		compatible = "nxp,tfa9896";
+		reg = <0x34>;
+		#sound-dai-cells = <0>;
+		sound-name-prefix = "Right Speaker";
+		status = "okay";
+	};
+
+	amp_left: audio-codec@35 {
+		compatible = "nxp,tfa9896";
+		reg = <0x35>;
+		#sound-dai-cells = <0>;
+		sound-name-prefix = "Left Speaker";
+		status = "okay";
+	};
+};
+
+/* ABOX firmware execution remains separately opt-in at module load. */
+/ {
+	gta3xlwifi_audio: sound {
+		compatible = "samsung,exynos7885-gta3xlwifi-audio";
+		model = "Samsung Galaxy Tab A 10.1 Speaker";
+		status = "okay";
+		/* The only built-in microphone is on codec input 1, biased by MICBIAS1. */
+		audio-routing = "Speaker", "Right Speaker OUT",
+				"Speaker", "Left Speaker OUT",
+				"Headphone", "HPOUT",
+				"IN1L", "Main Mic",
+				"Main Mic", "MICBIAS1";
+
+		cpu {
+			sound-dai = <&abox_audio 0>;
+		};
+
+		codecs {
+			sound-dai = <&amp_right>, <&amp_left>;
+		};
+
+		headphone {
+			cpu {
+				sound-dai = <&abox_audio 1>;
+			};
+
+			codec {
+				sound-dai = <&hp_codec>;
+			};
+		};
+
+		microphone {
+			cpu {
+				sound-dai = <&abox_audio 2>;
+			};
+
+			codec {
+				sound-dai = <&hp_codec>;
+			};
+		};
+	};
+
+	/* Headphone codec in the S2MPU08 package, reached through ACPM. */
+	hp_codec: audio-codec {
+		compatible = "samsung,cod3035x";
+		samsung,acpm-ipc = <&acpm_ipc 2>;
+		/* ABOX drives the codec MCLK pin (gpb0-0) from UAIF2. */
+		clocks = <&abox>;
+		clock-names = "mclk";
+		#sound-dai-cells = <0>;
+	};
+};
+
+&mmc_0 {
+	status = "okay";
+	broken-cd;
+	mmc-hs200-1_8v;
+	mmc-hs400-1_8v;
+	cap-mmc-highspeed;
+	non-removable;
+	mmc-hs400-enhanced-strobe;
+	card-detect-delay = <200>;
+	clock-frequency = <800000000>;
+	bus-width = <8>;
+	samsung,dw-mshc-ciu-div = <3>;
+	samsung,dw-mshc-sdr-timing = <0 4>;
+	samsung,dw-mshc-ddr-timing = <2 4>;
+	samsung,dw-mshc-hs400-timing = <0 2>;
+
+	pinctrl-names = "default",
+		"fast-slew-rate-1x",
+		"fast-slew-rate-2x",
+		"fast-slew-rate-3x",
+		"fast-slew-rate-4x";
+	pinctrl-0 = <&sd0_clk &sd0_cmd &sd0_rdqs &sd0_bus1 &sd0_bus4 &sd0_bus8>;
+	pinctrl-1 = <&sd0_clk_fast_slew_rate_1x>;
+	pinctrl-2 = <&sd0_clk_fast_slew_rate_2x>;
+	pinctrl-3 = <&sd0_clk_fast_slew_rate_3x>;
+	pinctrl-4 = <&sd0_clk_fast_slew_rate_4x>;
+};
+
+/*
+ * microSD slot; the card is present when gpa0-7 is low. UHS cards switch
+ * their I/O to 1.8 V (vqmmc, LDO2); the sample phase is tuned for SDR50
+ * and SDR104.
+ */
+&mmc_2 {
+	status = "okay";
+	bus-width = <4>;
+	cap-sd-highspeed;
+	sd-uhs-sdr12;
+	sd-uhs-sdr25;
+	sd-uhs-sdr50;
+	sd-uhs-sdr104;
+	disable-wp;
+	cd-gpios = <&gpa0 7 GPIO_ACTIVE_LOW>;
+	card-detect-delay = <200>;
+	vmmc-supply = <&vmmc_sd>;
+	vqmmc-supply = <&vqmmc_sd>;
+	clock-frequency = <800000000>;
+	samsung,dw-mshc-ciu-div = <3>;
+	samsung,dw-mshc-sdr-timing = <0 2>;
+	samsung,dw-mshc-ddr-timing = <1 2>;
+
+	pinctrl-names = "default";
+	pinctrl-0 = <&sd2_clk &sd2_cmd &sd2_bus1 &sd2_bus4 &sd2_cd>;
+};
+
+&pinctrl_alive {
+        attn_irq: attn-irq {
+		samsung,pins = "gpa0-0";
+		samsung,pin-function = <0xf>;
+		samsung,pin-pud = <0>;
+		samsung,pin-drv = <0>;
+	};
+
+	attn_input: attn-input {
+		samsung,pins = "gpa0-0";
+		samsung,pin-function = <0>;
+		samsung,pin-pud = <0>;
+	};
+
+	key_volup: key-volup-pins {
+		samsung,pins = "gpa1-5";
+		samsung,pin-function = <EXYNOS_PIN_FUNC_EINT>;
+		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
+		samsung,pin-drv = <EXYNOS5420_PIN_DRV_LV1>;
+	};
+
+	key_voldown: key-voldown-pins {
+		samsung,pins = "gpa1-6";
+		samsung,pin-function = <EXYNOS_PIN_FUNC_EINT>;
+		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
+		samsung,pin-drv = <EXYNOS5420_PIN_DRV_LV1>;
+	};
+
+	sd2_cd: sd2-cd-pins {
+		samsung,pins = "gpa0-7";
+		samsung,pin-function = <EXYNOS_PIN_FUNC_EINT>;
+		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
+		samsung,pin-drv = <EXYNOS5420_PIN_DRV_LV1>;
+	};
+
+	key_power: key-power-pins {
+		samsung,pins = "gpa1-7";
+		samsung,pin-function = <EXYNOS_PIN_FUNC_EINT>;
+		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
+		samsung,pin-drv = <EXYNOS5420_PIN_DRV_LV1>;
+	};
+
+	acc_int: acc-int-pins {
+		samsung,pins = "gpa0-3";
+		samsung,pin-function = <EXYNOS_PIN_FUNC_EINT>;
+		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
+		samsung,pin-drv = <EXYNOS5420_PIN_DRV_LV1>;
+	};
+};
+
+/* USI2 runs its second channel only, as I2C for the accelerometer. */
+&usi2 {
+	samsung,mode = <USI_MODE_I2C1>;
+	status = "okay";
+};
+
+&hsi2c_9 {
+	clock-frequency = <400000>;
+	status = "okay";
+
+	accelerometer@1d {
+		compatible = "st,lis2ds12";
+		reg = <0x1d>;
+		interrupt-parent = <&gpa0>;
+		/*
+		 * Level, not edge: the data-ready line stays high while a sample
+		 * is unread, so a missed edge stalls an edge-triggered buffer.
+		 */
+		interrupts = <3 IRQ_TYPE_LEVEL_HIGH>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&acc_int>;
+		/*
+		 * Portrait panel frame as iio-sensor-proxy reads it (x > 0 left
+		 * edge up, y > 0 bottom up, z > 0 face up): the vendor
+		 * st,orientation turned by 180 degrees about z.
+		 */
+		mount-matrix = "0", "-1", "0",
+			       "1", "0", "0",
+			       "0", "0", "-1";
+	};
+};
+
+&pinctrl_top {
+	cam_mclk0: cam-mclk0-pins {
+		samsung,pins = "gpc0-0";
+		samsung,pin-function = <EXYNOS_PIN_FUNC_2>;
+		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
+		samsung,pin-drv = <EXYNOS5420_PIN_DRV_LV3>;
+	};
+
+	cam_mclk1: cam-mclk1-pins {
+		samsung,pins = "gpc0-1";
+		samsung,pin-function = <EXYNOS_PIN_FUNC_2>;
+		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
+		samsung,pin-drv = <EXYNOS5420_PIN_DRV_LV3>;
+	};
+};
+
+/* Front camera */
+&hsi2c_0 {
+	clock-frequency = <400000>;
+	status = "okay";
+
+	camera@2d {
+		compatible = "samsung,s5k5e9";
+		reg = <0x2d>;
+		clocks = <&cmu_top CLK_DOUT_CIS_CLK1>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&cam_mclk1>;
+		reset-gpios = <&gpg3 5 GPIO_ACTIVE_LOW>;
+		vdig-supply = <&fcam_vdig>;
+		vana-supply = <&fcam_vana>;
+		vio-supply = <&cam_vio>;
+		orientation = <0>;
+		/* Images are upright with the right edge of the panel up. */
+		rotation = <90>;
+
+		port {
+			fcam_out: endpoint {
+				remote-endpoint = <&csis0_in>;
+				data-lanes = <1 2>;
+				link-frequencies = /bits/ 64 <468000000>;
+			};
+		};
+	};
+};
+
+/* Rear camera */
+&hsi2c_1 {
+	clock-frequency = <400000>;
+	status = "okay";
+
+	camera@2d {
+		compatible = "samsung,s5k4ha";
+		reg = <0x2d>;
+		clocks = <&cmu_top CLK_DOUT_CIS_CLK0>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&cam_mclk0>;
+		reset-gpios = <&gpg3 4 GPIO_ACTIVE_LOW>;
+		vana-supply = <&rcam_vana>;
+		vdig-supply = <&rcam_vdig>;
+		vio-supply = <&cam_vio>;
+		orientation = <1>;
+		/* Images are upright with the right edge of the panel up. */
+		rotation = <270>;
+		lens-focus = <&rcam_vcm>;
+
+		port {
+			rcam_out: endpoint {
+				remote-endpoint = <&csis1_in>;
+				data-lanes = <1 2 3 4>;
+				link-frequencies = /bits/ 64 <335400000>;
+			};
+		};
+	};
+};
+
+/* Rear camera focus motor; its bus pull-ups hang off cam_vio */
+&hsi2c_2 {
+	clock-frequency = <400000>;
+	status = "okay";
+
+	rcam_vcm: camera-lens@c {
+		compatible = "dongwoon,dw9808", "dongwoon,dw9768";
+		reg = <0x0c>;
+		vin-supply = <&cam_vio>;
+		vdd-supply = <&rcam_vaf>;
+		/* Samsung's settings: SAC3 (mode 0x61), Tvib 6.3 ms + 5.4 ms */
+		dongwoon,aac-mode = <3>;
+		dongwoon,clock-presc = <1>;
+		dongwoon,aac-timing = <0x36>;
+	};
+};
+
+&csis0 {
+	status = "okay";
+
+	port {
+		csis0_in: endpoint {
+			remote-endpoint = <&fcam_out>;
+			data-lanes = <1 2>;
+		};
+	};
+};
+
+&csis1 {
+	status = "okay";
+
+	port {
+		csis1_in: endpoint {
+			remote-endpoint = <&rcam_out>;
+			data-lanes = <1 2 3 4>;
+		};
+	};
+};
+
+&i2c_4 {
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	status = "okay";
+	samsung,i2c-sda-delay = <100>;
+	samsung,i2c-max-bus-freq = <400000>;
+
+	touchscreen@49 {
+		compatible = "st,fts1ba90a";
+		reg = <0x49>;
+		interrupt-parent = <&gpa0>;
+		interrupts = <0 IRQ_TYPE_LEVEL_LOW>;
+		pinctrl-names = "default", "sleep";
+		pinctrl-0 = <&attn_irq>;
+		pinctrl-1 = <&attn_input>;
+		vdd-supply = <&tsp_dvdd>;
+		avdd-supply = <&tsp_avdd>;
+		panel = <&panel>;
+		/*
+		 * Probe without waiting for the panel driver, which loads
+		 * from the root filesystem: the FDE unlock screen needs touch.
+		 */
+		post-init-providers = <&panel>;
+		touchscreen-size-x = <1200>;
+		touchscreen-size-y = <1920>;
+		wakeup-source;
+	};
+};
+
+&oscclk {
+	clock-frequency = <26000000>;
+};
+
+
+&usbdrd {
+	status = "okay";
+	vdd10-supply = <&reg_dummy>;
+	vdd33-supply = <&reg_dummy>;
+};
+
+&usbdrd_dwc3 {
+	dr_mode = "otg";
+	usb-role-switch;
+	role-switch-default-mode = "peripheral";
+	maximum-speed = "high-speed";
+	usb-psy-name = "s2mu005-charger";
+	snps,quirk-frame-length-adjustment = <0x20>;
+
+	port {
+		usb_drd_ep: endpoint {
+			remote-endpoint = <&typec_ep>;
+		};
+	};
+};
+
+&usbdrd_phy {
+	status = "okay";
+};
+
+/* ADC channel 1 is the battery NTC, not the fuel-gauge die sensor. */
+&adc {
+	status = "okay";
+	vdd-supply = <&reg_dummy>;
+};
+
+&pinctrl_alive {
+	ccic_irq: ccic-irq {
+		samsung,pins = "gpa0-2";
+		samsung,pin-function = <0xf>;
+		samsung,pin-pud = <3>;
+	};
+
+	if_pmic_irq: if-pmic-irq {
+		samsung,pins = "gpa2-2";
+		samsung,pin-function = <0xf>;
+		samsung,pin-pud = <0>;
+	};
+};
+
+&i2c_1 {
+	status = "okay";
+
+	pmic@3d {
+		compatible = "samsung,s2mu005";
+		reg = <0x3d>;
+		interrupt-parent = <&gpa2>;
+		interrupts = <2 IRQ_TYPE_LEVEL_LOW>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&if_pmic_irq>;
+
+		usb_mux: mux-controller {
+			compatible = "samsung,s2mu005-mux";
+			#mux-control-cells = <0>;
+		};
+
+		charger {
+			compatible = "samsung,s2mu005-charger";
+			samsung,usb-port = <&typec>;
+			monitored-battery = <&battery>;
+			io-channels = <&adc 1>;
+			io-channel-names = "battery-temperature";
+			/* Stop at 50/0 C; recover at 45/5 C (Samsung NTC table). */
+			samsung,temperature-adc-limits = <1052 1220 2964 3166>;
+
+			usb_vbus: vbus {
+				regulator-name = "usb-vbus";
+				regulator-min-microvolt = <5100000>;
+				regulator-max-microvolt = <5100000>;
+			};
+		};
+	};
+};
+
+&i2c_6 {
+	status = "okay";
+	samsung,i2c-max-bus-freq = <400000>;
+
+	typec: typec@33 {
+		compatible = "samsung,s2mm005";
+		reg = <0x33>;
+		interrupt-parent = <&gpa0>;
+		interrupts = <2 IRQ_TYPE_LEVEL_LOW>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&ccic_irq>;
+		vbus-supply = <&usb_vbus>;
+		mux-controls = <&usb_mux>;
+		mux-control-names = "usb";
+		wakeup-source;
+
+		connector {
+			compatible = "usb-c-connector";
+			label = "USB-C";
+			power-role = "dual";
+			data-role = "dual";
+
+			port {
+				typec_ep: endpoint {
+					remote-endpoint = <&usb_drd_ep>;
+				};
+			};
+		};
+	};
+};
+
+&i2c_0 {
+	status = "okay";
+
+	fuel-gauge@3b {
+		compatible = "samsung,s2mu005-fg";
+		reg = <0x3b>;
+	};
+};

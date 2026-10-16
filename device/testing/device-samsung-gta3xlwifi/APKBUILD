@@ -1,0 +1,177 @@
+# Reference: <https://postmarketos.org/devicepkg>
+pkgname=device-samsung-gta3xlwifi
+pkgdesc="Samsung Galaxy Tab A"
+pkgver=1
+pkgrel=37
+url="https://postmarketos.org"
+license="MIT"
+arch="aarch64"
+options="!check !archcheck"
+# The Mesa fork carries the Mali-G71 derivative fix (gpu-dev TEX-001). Keep
+# it from being replaced by the repositories' Mesa, which GNOME Software's
+# updater (apk upgrade --available) would otherwise do. The same goes for
+# the libcamera fork, which adds the CSIS and S5K4HA/S5K5E9 support.
+depends="
+	linux-samsung-gta3xlwifi
+	libcamera>=99990.7.2-r100
+	mesa>=26.3.0_git20261014-r3
+	mesa-dri-gallium
+	mesa-vulkan-panfrost
+	postmarketos-base
+	mkbootimg
+	libcap-getcap
+	libcap-setcap
+	networkmanager
+	networkmanager-cli
+	bluez
+	util-linux-misc
+	iio-sensor-proxy
+	py3-gobject3
+	xinput
+	xrandr
+"
+# The systemd units used to be in a -systemd subpackage pulled in through
+# install_if; apk upgrade --available removes such packages because no
+# repository carries them. Units are inert on OpenRC.
+replaces="$pkgname-systemd"
+makedepends="devicepkg-dev"
+triggers="$pkgname.trigger=/usr/bin"
+source="
+	deviceinfo
+	90-gta3xlwifi-networkmanager.conf
+	gta3xlwifi-wifibt.sh
+	gta3xlwifi-wifibt-networkmanager.sh
+	wifibt.initd
+	wifibt-networkmanager.initd
+	gta3xlwifi-wifibt.service
+	gta3xlwifi-wifibt-networkmanager.service
+	80-device-samsung-gta3xlwifi.preset
+	gta3xlwifi-kwin-rt.sh
+	gta3xlwifi-kwin-rt.service
+	gta3xlwifi-kwin-rt.start
+	gta3xlwifi-rtprio.conf
+	gta3xlwifi-rtprio-limits.conf
+	device-samsung-gta3xlwifi.trigger
+	gta3xlwifi-audio-modprobe.conf
+	gta3xlwifi-audio-modules.conf
+	gta3xlwifi-ucm.conf
+	gta3xlwifi-ucm-HiFi.conf
+	gta3xlwifi-panvk.sh
+	gta3xlwifi-graphics.sh
+	90_device-samsung-gta3xlwifi.gschema.override
+	gta3xlwifi-display-modules.conf
+	gta3xlwifi-xorg-dpu.conf
+	gta3xlwifi-autorotate
+	gta3xlwifi-autorotate.desktop
+	gta3xlwifi-rotation-lock.desktop
+	device-samsung-gta3xlwifi-openrc.post-install
+	device-samsung-gta3xlwifi-openrc.post-upgrade
+	device-samsung-gta3xlwifi-openrc.pre-deinstall
+"
+subpackages="$pkgname-openrc $pkgname-nonfree-firmware:nonfree_firmware"
+
+build() {
+	devicepkg_build $startdir $pkgname
+}
+
+package() {
+	devicepkg_package $startdir $pkgname
+	install -Dm644 "$srcdir/90-gta3xlwifi-networkmanager.conf" \
+		"$pkgdir/etc/NetworkManager/conf.d/90-gta3xlwifi.conf"
+	install -Dm755 "$srcdir/gta3xlwifi-wifibt.sh" \
+		"$pkgdir/usr/libexec/gta3xlwifi/wifibt"
+	install -Dm755 "$srcdir/gta3xlwifi-wifibt-networkmanager.sh" \
+		"$pkgdir/usr/libexec/gta3xlwifi/wifibt-networkmanager"
+	install -Dm755 "$srcdir/gta3xlwifi-kwin-rt.sh" \
+		"$pkgdir/usr/libexec/gta3xlwifi/kwin-rt"
+	install -Dm644 "$srcdir/gta3xlwifi-wifibt.service" \
+		"$srcdir/gta3xlwifi-wifibt-networkmanager.service" \
+		"$srcdir/gta3xlwifi-kwin-rt.service" \
+		-t "$pkgdir/usr/lib/systemd/system"
+	install -Dm644 "$srcdir/80-device-samsung-gta3xlwifi.preset" \
+		-t "$pkgdir/usr/lib/systemd/system-preset"
+	# Real-time priority for KWin's threads without CAP_SYS_NICE
+	install -Dm644 "$srcdir/gta3xlwifi-rtprio.conf" \
+		"$pkgdir/usr/lib/systemd/system/user@.service.d/gta3xlwifi-rtprio.conf"
+	install -Dm644 "$srcdir/gta3xlwifi-audio-modprobe.conf" \
+		"$pkgdir/etc/modprobe.d/gta3xlwifi-audio.conf"
+	install -Dm644 "$srcdir/gta3xlwifi-audio-modules.conf" \
+		"$pkgdir/usr/lib/modules-load.d/gta3xlwifi-audio.conf"
+	install -Dm644 "$srcdir/gta3xlwifi-ucm.conf" \
+		"$pkgdir/usr/share/alsa/ucm2/Samsung/gta3xlwifi/gta3xlwifi.conf"
+	install -Dm644 "$srcdir/gta3xlwifi-ucm-HiFi.conf" \
+		"$pkgdir/usr/share/alsa/ucm2/Samsung/gta3xlwifi/HiFi.conf"
+	mkdir -p "$pkgdir/usr/share/alsa/ucm2/conf.d/gta3xlwifi"
+	ln -s ../../Samsung/gta3xlwifi/gta3xlwifi.conf \
+		"$pkgdir/usr/share/alsa/ucm2/conf.d/gta3xlwifi/gta3xlwifi.conf"
+	install -Dm644 "$srcdir/gta3xlwifi-panvk.sh" \
+		"$pkgdir/etc/profile.d/gta3xlwifi-panvk.sh"
+	install -Dm644 "$srcdir/gta3xlwifi-graphics.sh" \
+		"$pkgdir/etc/profile.d/gta3xlwifi-graphics.sh"
+	install -Dm644 "$srcdir/90_device-samsung-gta3xlwifi.gschema.override" \
+		-t "$pkgdir/usr/share/glib-2.0/schemas"
+	install -Dm644 "$srcdir/gta3xlwifi-display-modules.conf" \
+		"$pkgdir/usr/lib/modules-load.d/gta3xlwifi-display.conf"
+	install -Dm644 "$srcdir/gta3xlwifi-xorg-dpu.conf" \
+		"$pkgdir/usr/share/X11/xorg.conf.d/10-exynos7885-dpu.conf"
+	# Accelerometer screen rotation for XFCE (X11), via iio-sensor-proxy
+	install -Dm755 "$srcdir/gta3xlwifi-autorotate" \
+		"$pkgdir/usr/bin/gta3xlwifi-autorotate"
+	install -Dm644 "$srcdir/gta3xlwifi-autorotate.desktop" \
+		"$pkgdir/etc/xdg/autostart/gta3xlwifi-autorotate.desktop"
+	install -Dm644 "$srcdir/gta3xlwifi-rotation-lock.desktop" \
+		"$pkgdir/usr/share/applications/gta3xlwifi-rotation-lock.desktop"
+}
+
+openrc() {
+	install_if="$pkgname=$pkgver-r$pkgrel openrc"
+	install="$subpkgname.post-install $subpkgname.post-upgrade $subpkgname.pre-deinstall"
+	depends="openrc networkmanager networkmanager-cli bluez util-linux-misc"
+	install -Dm755 "$srcdir/wifibt.initd" "$subpkgdir/etc/init.d/wifibt"
+	install -Dm755 "$srcdir/wifibt-networkmanager.initd" \
+		"$subpkgdir/etc/init.d/wifibt-networkmanager"
+	install -Dm755 "$srcdir/gta3xlwifi-kwin-rt.start" \
+		"$subpkgdir/etc/local.d/gta3xlwifi-kwin-rt.start"
+	install -Dm644 "$srcdir/gta3xlwifi-rtprio-limits.conf" \
+		"$subpkgdir/etc/security/limits.d/90-gta3xlwifi-rtprio.conf"
+}
+
+
+nonfree_firmware() {
+	pkgdesc="Samsung gta3xlwifi nonfree firmware"
+	depends="firmware-samsung-gta3xlwifi"
+	mkdir "$subpkgdir"
+}
+
+sha512sums="
+74501f973001fc442ae6d4ecdbdf78d74f51ff485e3366e4b9b80c9a1e03272dac9e6836efe3d4325aaad1adab4221cc22c8de186fe96264e6a2b4ae00876c61  deviceinfo
+21a9ec07d037b699d614709140292ea8987305b59de28d9ee550189ab6bfbfdb20c8843e55517fc669c2b776df85bd3d38867db096e00ec1efd8476c0f034383  90-gta3xlwifi-networkmanager.conf
+e01ba34f884264c421da19e34aabb0e83d7571c5b5e413bb944a2410b3d1680210b39789b754016b9e09288e444e8bbffe29ca3ead6cbcd6c837e7294f5659f6  gta3xlwifi-wifibt.sh
+b7af67ca4bc2e7b9f9281e9da45b057973631e815edd886e139b8caa7ba5db3a848325616feab6fdfc675e0f3cb31ef26f865fa39274abb366577f6db46e40aa  gta3xlwifi-wifibt-networkmanager.sh
+feebe8f41409e90425901ace0cf8b9af97537697329a8df44c16f9a6ee10a23e031d04848e8d799e8dae679b7cae771382e65d7409c7964bfc03228e0aa29f43  wifibt.initd
+303255d2aeb8921c0f00a6ef897d623eff39cbbe84c4e420c8aee48a6371b8347b0c562fcd9dbe319b7946b14ec65a781af0b4f395f2269dda6533c442e82479  wifibt-networkmanager.initd
+f4f50bedda4340412380643b885a410ace971f4f6a208c719f8bd3f6d40cc73f9a2d5c013ffa2a09e575059bb461e0edbb42e9fe44ca6fbf12cd913645017843  gta3xlwifi-wifibt.service
+c7ce1040b3fb572e253d02e6ca03a7be20467f9c0614d6ff4399e6387723403393d358c346df570a6c8fcbcaf4be3c7ea98dae7ba395dec4692b09925063ad76  gta3xlwifi-wifibt-networkmanager.service
+0608994ef24ef8d1c9763abb9c5a9d67a64cf4b5f116e80ac3a73cdc01945bd8013bf4162e9f35fb560016da72217ad8c590b8957832574c5249e9c0d07eecb9  80-device-samsung-gta3xlwifi.preset
+e622008ba0517a68c6429dc4590aba9894697cc19b3510a8fee04f13a57d37b9e06ab4405ce9c013bceb1be49620b3374e6de193efc8106d02ea57aca1f98476  gta3xlwifi-kwin-rt.sh
+186fed84201cb0041109c3c74b3473a898d7ac69cdec2008bfae422e7ff53b799c84ea3422a7fc5d4a0dc0057b69770771887e5c10ccdf56d13fb2ae8acf1950  gta3xlwifi-kwin-rt.service
+849cced91a5a406c61d71be56c77e2ecbb7f383a260064243d2d7564c5e2feec9bbeab8f4ce59b1db54c6607fe1c7c69d27b2ea1309de7a817d51d80cb8f301f  gta3xlwifi-kwin-rt.start
+2091aad321201a094e6c509f39306222525c45f5ca6e12044f7e3bb952790fd0287981d3ed512961e1c2eb5296a47b3ad636072b6e16872430f97a23fd4240b4  gta3xlwifi-rtprio.conf
+41a12cf46b9b11531beefc4fa86ea8dfb8c5dbd37c0b133b8e6a49b3b1a76531322052af8d031e9a5258c199913aad6b09bcbb6596d877f74bc6bf6bd2a603f8  gta3xlwifi-rtprio-limits.conf
+44e8e1d2c50534c8531cc0c895500df3d8f6f05efdd3de015e8b19c8b6ae1f8e63a140612430a08f4147b8cd72096acc5ddaa365343462ce1ce8127392f98bca  device-samsung-gta3xlwifi.trigger
+3aeb5822273ccdb9143faab74982e7c5e85e958b9af9d264ce8415633c64c445f91d71f01f8f64e4b7768f45f3437e26060af4c0bff2edac8ba2ca82f11f5990  gta3xlwifi-audio-modprobe.conf
+bf9c8bce543a69df4a01b026bdc36e011a770d38521c1ab17e0585f704a8559468758c5a4523175804543b7c4e0af0dbf4bd9244dea2f86050d88e9d194594ca  gta3xlwifi-audio-modules.conf
+59444ff27216e9617ef041d720c594863522001a140b434aae32a45998b4b4219a1dfdec35e694423ee3402000df5c52528c3e30cb9a1dc98190bb7711cf2e61  gta3xlwifi-ucm.conf
+3efcd72aea553b2cb27b932b1275032ca56701abb0e410111a8405877208e56beb8103e2a60fe154611711e2b3ec08015eea010e6a33153eaf6a2731c6030d5c  gta3xlwifi-ucm-HiFi.conf
+638d560fae3d810c92b1d40aa654be346b69ad06be1c29e082b3fb5a3549443a59a1c3e411b1520b1434b5daf383c92257ba4f692bfab288ac2a12b39eed3fa8  gta3xlwifi-panvk.sh
+03d9d5530a5ed5f40ad3ff56ac315a0b208a1640e9975ccfccf7ae18abde43092c808299aa28a28a60d1d4f73e3cd4126f73319ad9b232491fcc72e6f71d6ed8  gta3xlwifi-graphics.sh
+77c1d80123482977c51478489b4d3f3455a17215e163c9b28573689a4cba7f56cb3152958051c1c42b70c76326857e6abc7f748f2c3ba95ed75a0d8f6d83ab6d  90_device-samsung-gta3xlwifi.gschema.override
+da1ed1d569326ab830a7e0c001dc5a1f9dc2013a97a419e5ef1c0c50f540232584ac23d077fd3b7de7a798f0867776a27e24754ca1114d3e73a1638aec791037  gta3xlwifi-display-modules.conf
+8038d3ae92c767bc73330e93744d89ada48b4819cc08c15b8aa59dfe0eccca14165285ff8269d9e60bfddb2f4cb7631e00db818acdc5198567a28dd9b89daf5c  gta3xlwifi-xorg-dpu.conf
+7623cc1a01fa56b5fe719dc4dcd2b46c162e1f77aff538f3d07b574a58c895c3695f85d2097955acaaf05dc59164b3e45836124ee04ef96671450370fb34ae9c  gta3xlwifi-autorotate
+c52b19d07a88fcd463ca622b750bae4bd6dda837e96d95973d4d706f1b394a2d7430813879d22416025baea65bdf1bee10e353159a377a3c78adc08f36962340  gta3xlwifi-autorotate.desktop
+a703c2c22ae6f4e24cffb47996361d607ea53672ad92520dffba81738e33ccb07998a26f411112aa100e10a3c3c3f285536b80cde644b2fc0c3f78ebb0bc5b2d  gta3xlwifi-rotation-lock.desktop
+7084b9be9ce1be25f14133aa6bd0e4292bdfc4a63d02b66de21fff94e3acc56e1b0f88dc6a940ca2e46ad2908895f1d2744e1c45658a46d8ea1116809aa5b8b3  device-samsung-gta3xlwifi-openrc.post-install
+7084b9be9ce1be25f14133aa6bd0e4292bdfc4a63d02b66de21fff94e3acc56e1b0f88dc6a940ca2e46ad2908895f1d2744e1c45658a46d8ea1116809aa5b8b3  device-samsung-gta3xlwifi-openrc.post-upgrade
+0e541e19bf54756f5fb05907fd7bd8811970c62fb95cf76fcd99f3bef1a4c5e6e9ed522633ce57022210cd50dd5f3c8f54dfc3c10b93c4c061a24ab4cb30cc68  device-samsung-gta3xlwifi-openrc.pre-deinstall
+"

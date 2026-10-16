@@ -1,0 +1,11 @@
+[Unit]
+Description=Keep KWin on the session bus (no file capabilities on kwin_wayland)
+ConditionPathExists=/usr/bin/kwin_wayland
+Before=display-manager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/gta3xlwifi/kwin-rt
+
+[Install]
+WantedBy=multi-user.target

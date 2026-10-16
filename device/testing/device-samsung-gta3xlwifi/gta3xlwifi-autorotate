@@ -1,0 +1,130 @@
+#!/usr/bin/python3
+# SPDX-License-Identifier: MIT
+"""Rotate the X11 screen and touchscreen of the Galaxy Tab A 10.1 (SM-T510)
+with its accelerometer, through iio-sensor-proxy, for desktops that have no
+auto-rotation of their own (XFCE).
+
+    gta3xlwifi-autorotate                 follow the accelerometer
+    gta3xlwifi-autorotate --toggle-lock   lock or unlock the rotation
+"""
+
+import os
+import subprocess
+import sys
+
+import gi
+
+gi.require_version("Gio", "2.0")
+from gi.repository import Gio, GLib  # noqa: E402
+
+BUS_NAME = "net.hadess.SensorProxy"
+OBJECT_PATH = "/net/hadess/SensorProxy"
+OUTPUT = os.environ.get("GTA3XL_ROTATE_OUTPUT", "DSI-1")
+TOUCHSCREEN = "pointer:fts1ba90a"
+# iio-sensor-proxy orientation -> xrandr rotation of the portrait panel
+ROTATIONS = {
+    "normal": "normal",
+    "bottom-up": "inverted",
+    "left-up": "left",
+    "right-up": "right",
+}
+LOCK_FILE = os.path.join(GLib.get_user_config_dir(), "gta3xlwifi-rotation-lock")
+
+
+def log(msg):
+    print(f"gta3xlwifi-autorotate: {msg}", file=sys.stderr, flush=True)
+
+
+def run(cmd):
+    try:
+        subprocess.run(cmd, check=True, capture_output=True, timeout=10)
+        return True
+    except (OSError, subprocess.SubprocessError) as e:
+        err = getattr(e, "stderr", b"") or b""
+        log(f"{' '.join(cmd)} failed: {e} {err.decode(errors='replace').strip()}")
+        return False
+
+
+def notify(body):
+    run(["notify-send", "-t", "2000", "-i", "object-rotate-right",
+         "Screen rotation", body])
+
+
+def toggle_lock():
+    if os.path.exists(LOCK_FILE):
+        os.unlink(LOCK_FILE)
+        notify("Unlocked: the screen follows the tablet")
+    else:
+        os.makedirs(os.path.dirname(LOCK_FILE), exist_ok=True)
+        open(LOCK_FILE, "w").close()
+        notify("Locked in the current orientation")
+
+
+class AutoRotate:
+    def __init__(self):
+        self.rotation = None
+        self.claimed = False
+        self.proxy = Gio.DBusProxy.new_for_bus_sync(
+            Gio.BusType.SYSTEM, Gio.DBusProxyFlags.NONE, None,
+            BUS_NAME, OBJECT_PATH, BUS_NAME, None)
+        self.proxy.connect("g-properties-changed", self.on_properties)
+        # iio-sensor-proxy may start after us or restart: claim again
+        self.proxy.connect("notify::g-name-owner", self.on_owner)
+        # Apply the current orientation when the lock is removed
+        lock = Gio.File.new_for_path(LOCK_FILE)
+        self.lock_monitor = lock.monitor_file(Gio.FileMonitorFlags.NONE, None)
+        self.lock_monitor.connect("changed", lambda *args: self.apply())
+        self.on_owner()
+
+    def on_owner(self, *args):
+        self.claimed = False
+        if self.proxy.get_name_owner() is None:
+            log("waiting for iio-sensor-proxy")
+            return
+        try:
+            self.proxy.call_sync("ClaimAccelerometer", None,
+                                 Gio.DBusCallFlags.NONE, -1, None)
+        except GLib.Error as e:
+            log(f"cannot claim the accelerometer: {e.message}")
+            return
+        self.claimed = True
+        log("accelerometer claimed")
+        self.apply()
+
+    def on_properties(self, proxy, changed, invalidated):
+        if "AccelerometerOrientation" in changed.keys():
+            self.apply()
+
+    def apply(self):
+        if not self.claimed or os.path.exists(LOCK_FILE):
+            return
+        value = self.proxy.get_cached_property("AccelerometerOrientation")
+        orientation = value.unpack() if value else None
+        rotation = ROTATIONS.get(orientation)
+        if rotation is None or rotation == self.rotation:
+            return
+        log(f"orientation {orientation}: rotating to {rotation}")
+        if not run(["xrandr", "--output", OUTPUT, "--rotate", rotation]):
+            return
+        # Recomputes the touch transformation for the rotated output
+        run(["xinput", "map-to-output", TOUCHSCREEN, OUTPUT])
+        self.rotation = rotation
+
+
+def main():
+    if sys.argv[1:] == ["--toggle-lock"]:
+        toggle_lock()
+        return
+    if sys.argv[1:]:
+        print(__doc__, file=sys.stderr)
+        sys.exit(2)
+    if not os.environ.get("DISPLAY"):
+        log("no X display, exiting")
+        return
+    # Keep a reference: the proxy and its signal handlers must stay alive
+    rotate = AutoRotate()  # noqa: F841
+    GLib.MainLoop().run()
+
+
+if __name__ == "__main__":
+    main()

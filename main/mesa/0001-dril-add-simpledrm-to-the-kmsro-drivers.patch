@@ -1,0 +1,31 @@
+From: postmarketOS gta3xlwifi port
+Subject: [PATCH] dril: add simpledrm to the kmsro drivers
+
+Tablets whose display runs on simpledrm can render with a separate GPU
+through kmsro: the pipe-loader already falls back to kmsro for unknown
+display drivers, so EGL and GBM work. The X server's DRI loader, however,
+looks for simpledrm_dri.so and finds nothing, so glamor/GLX cannot use the
+GPU. Add simpledrm to the dril kmsro list.
+
+Link: https://gitlab.freedesktop.org/mesa/mesa/-/issues/8929
+---
+--- a/src/gallium/targets/dril/dril_target.c
++++ b/src/gallium/targets/dril/dril_target.c
+@@ -676,6 +676,7 @@
+ DEFINE_LOADER_DRM_ENTRYPOINT(repaper)
+ DEFINE_LOADER_DRM_ENTRYPOINT(rockchip)
+ DEFINE_LOADER_DRM_ENTRYPOINT(rzg2l_du)
++DEFINE_LOADER_DRM_ENTRYPOINT(simpledrm)
+ DEFINE_LOADER_DRM_ENTRYPOINT(ssd130x)
+ DEFINE_LOADER_DRM_ENTRYPOINT(st7586)
+ DEFINE_LOADER_DRM_ENTRYPOINT(st7735r)
+--- a/src/gallium/targets/dril/meson.build
++++ b/src/gallium/targets/dril/meson.build
+@@ -91,6 +91,7 @@
+                'repaper',
+                'rockchip',
+                'rzg2l-du',
++               'simpledrm',
+                'ssd130x',
+                'st7586',
+                'st7735r',

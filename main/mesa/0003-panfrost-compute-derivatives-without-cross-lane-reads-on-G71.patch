@@ -1,0 +1,305 @@
+From: Mollomm1 <68751598+Mollomm1@users.noreply.github.com>
+Subject: [PATCH] panfrost: compute derivatives without cross-lane reads on G71
+
+On Mali-G71 (r0p0 tested) CLPER_OLD returns zero for every lane, so
+dFdx/dFdy come out as minus their operand (fine) or zero (coarse). GTK's
+and WebRender's fwidth()-based antialiasing then render text, icons and
+pages nearly black or transparent.
+
+Lower derivatives on G71 by re-evaluating the operand with its varyings
+interpolated a quarter pixel to either side and taking the central
+difference. PAN_DERIV_OFFSET=0 restores the hardware path.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+--- a/src/panfrost/compiler/meson.build	2026-10-15 12:18:08.844955820 +0200
++++ b/src/panfrost/compiler/meson.build	2026-10-15 12:18:08.860919625 +0200
+@@ -7,6 +7,7 @@
+   'pan_nir_collect_varyings.c',
+   'pan_nir_fuse_io_cvt.c',
+   'pan_nir_lower_bool_to_bitsize.c',
++  'pan_nir_lower_derivatives_offset.c',
+   'pan_nir_lower_divergent_scratch.c',
+   'pan_nir_lower_framebuffer.c',
+   'pan_nir_lower_fs_inputs.c',
+--- a/src/panfrost/compiler/pan_nir.h	2026-10-15 12:18:08.845955820 +0200
++++ b/src/panfrost/compiler/pan_nir.h	2026-10-15 12:18:08.863401722 +0200
+@@ -242,6 +242,8 @@
+ bool pan_nir_lower_var_special_pan(nir_shader *shader);
+ bool pan_nir_lower_noperspective_vs(nir_shader *shader);
+ 
++bool pan_nir_lower_derivatives_offset(nir_shader *shader);
++
+ bool pan_nir_lower_vs_inputs(nir_shader *shader);
+ 
+ bool pan_nir_lower_vs_outputs(nir_shader *shader, unsigned arch,
+--- a/src/panfrost/compiler/bifrost/bifrost_nir.c	2026-10-15 12:18:08.846955820 +0200
++++ b/src/panfrost/compiler/bifrost/bifrost_nir.c	2026-10-15 12:18:19.358253741 +0200
+@@ -10,6 +10,7 @@
+ #include "panfrost/compiler/pan_compiler.h"
+ #include "panfrost/compiler/pan_nir.h"
+ #include "util/perf/cpu_trace.h"
++#include "util/u_debug.h"
+ 
+ #include "panfrost/model/pan_model.h"
+ #include "valhall/valhall.h"
+@@ -828,6 +829,12 @@
+    NIR_PASS(_, nir, nir_opt_move, nir_move_all);
+ 
+    if (nir->info.stage == MESA_SHADER_FRAGMENT) {
++      /* Mali-G71 returns zero from cross-lane reads, which derivatives
++       * depend on. PAN_DERIV_OFFSET=0 restores the hardware path. */
++      if (inputs->model && inputs->model->gpu_prod_id == PAN_PROD_ID(6, 0, 0) &&
++          debug_get_bool_option("PAN_DERIV_OFFSET", true))
++         NIR_PASS(_, nir, pan_nir_lower_derivatives_offset);
++
+       NIR_PASS(_, nir, nir_lower_is_helper_invocation);
+       NIR_PASS(_, nir, pan_nir_lower_helper_invocation);
+       NIR_PASS(_, nir, pan_nir_lower_sample_pos);
+--- /dev/null
++++ b/src/panfrost/compiler/pan_nir_lower_derivatives_offset.c
+@@ -0,0 +1,244 @@
++/*
++ * Copyright 2026 Mollomm1
++ * SPDX-License-Identifier: MIT
++ */
++
++#include "util/hash_table.h"
++#include "nir_builder.h"
++#include "pan_nir.h"
++
++/*
++ * Mali-G71 cannot exchange values between the lanes of a quad: on the r0p0
++ * parts tested, CLPER_OLD returns zero for every lane, so fine derivatives
++ * come out as minus their operand and coarse ones as zero. Shaders that use
++ * fwidth() for antialiasing (GTK, WebRender) then render mostly dark or
++ * transparent.
++ *
++ * Compute derivatives without cross-lane access instead: re-evaluate the
++ * operand with its varyings interpolated a quarter pixel to either side
++ * (the hardware's explicit sample location) and with gl_FragCoord shifted
++ * to match, then take the central difference. This is exact for operands
++ * built from varyings, gl_FragCoord, uniforms and constants through ALU
++ * operations. Larger offsets are clamped by the hardware. Operands that
++ * depend on anything else (texture or memory reads, control flow) get a
++ * derivative of zero, which is no worse than the hardware result.
++ */
++
++#define DERIV_OFFSET 0.25f
++#define MAX_NODES    256
++
++struct remat_state {
++   nir_builder *b;
++   float dx, dy;
++   struct hash_table *map;
++   unsigned nodes;
++   bool failed;
++};
++
++static nir_def *remat(struct remat_state *s, nir_def *def);
++
++static nir_def *
++remat_barycentric(struct remat_state *s, nir_intrinsic_instr *bary)
++{
++   nir_builder *b = s->b;
++   nir_def *offset = nir_imm_vec2(b, s->dx, s->dy);
++
++   switch (bary->intrinsic) {
++   case nir_intrinsic_load_barycentric_pixel:
++   case nir_intrinsic_load_barycentric_centroid:
++   case nir_intrinsic_load_barycentric_sample:
++   case nir_intrinsic_load_barycentric_at_sample:
++      break;
++   case nir_intrinsic_load_barycentric_at_offset: {
++      nir_def *base = remat(s, bary->src[0].ssa);
++      if (s->failed)
++         return NULL;
++      if (base->bit_size != 32)
++         base = nir_f2f32(b, base);
++      offset = nir_fadd(b, base, offset);
++      break;
++   }
++   default:
++      s->failed = true;
++      return NULL;
++   }
++
++   return nir_load_barycentric_at_offset(
++      b, 32, offset, .interp_mode = nir_intrinsic_interp_mode(bary));
++}
++
++static bool
++is_uniform_load(nir_intrinsic_op op)
++{
++   switch (op) {
++   case nir_intrinsic_load_input:
++   case nir_intrinsic_load_ubo:
++   case nir_intrinsic_load_ubo_vec4:
++   case nir_intrinsic_load_uniform:
++   case nir_intrinsic_load_push_constant:
++   case nir_intrinsic_load_constant:
++   case nir_intrinsic_load_front_face:
++      return true;
++   default:
++      return false;
++   }
++}
++
++/* Returns def as evaluated at the offset position; def itself if it does
++ * not vary between the two positions. */
++static nir_def *
++remat(struct remat_state *s, nir_def *def)
++{
++   if (s->failed)
++      return def;
++
++   struct hash_entry *he = _mesa_hash_table_search(s->map, def);
++   if (he)
++      return he->data;
++
++   if (++s->nodes > MAX_NODES) {
++      s->failed = true;
++      return def;
++   }
++
++   nir_instr *instr = nir_def_instr(def);
++   nir_def *res = def;
++
++   switch (instr->type) {
++   case nir_instr_type_load_const:
++   case nir_instr_type_undef:
++      break;
++
++   case nir_instr_type_alu: {
++      nir_alu_instr *alu = nir_instr_as_alu(instr);
++      unsigned n = nir_op_infos[alu->op].num_inputs;
++      nir_def *srcs[NIR_MAX_VEC_COMPONENTS];
++      bool changed = false;
++
++      for (unsigned i = 0; i < n; i++) {
++         srcs[i] = remat(s, alu->src[i].src.ssa);
++         if (s->failed)
++            return def;
++         changed |= srcs[i] != alu->src[i].src.ssa;
++      }
++
++      if (changed) {
++         nir_alu_instr *c =
++            nir_instr_as_alu(nir_instr_clone(s->b->shader, instr));
++         for (unsigned i = 0; i < n; i++)
++            c->src[i].src = nir_src_for_ssa(srcs[i]);
++         nir_builder_instr_insert(s->b, &c->instr);
++         res = &c->def;
++      }
++      break;
++   }
++
++   case nir_instr_type_intrinsic: {
++      nir_intrinsic_instr *intr = nir_instr_as_intrinsic(instr);
++
++      if (intr->intrinsic == nir_intrinsic_load_interpolated_input) {
++         nir_intrinsic_instr *bary = nir_src_as_intrinsic(intr->src[0]);
++         if (!bary) {
++            s->failed = true;
++            return def;
++         }
++         nir_def *offset_src = remat(s, intr->src[1].ssa);
++         nir_def *new_bary = remat_barycentric(s, bary);
++         if (s->failed || offset_src != intr->src[1].ssa) {
++            s->failed = true;
++            return def;
++         }
++         nir_intrinsic_instr *c =
++            nir_instr_as_intrinsic(nir_instr_clone(s->b->shader, instr));
++         c->src[0] = nir_src_for_ssa(new_bary);
++         nir_builder_instr_insert(s->b, &c->instr);
++         res = &c->def;
++      } else if (intr->intrinsic == nir_intrinsic_load_frag_coord) {
++         res = nir_fadd(s->b, def, nir_imm_vec4(s->b, s->dx, s->dy, 0, 0));
++      } else if (is_uniform_load(intr->intrinsic)) {
++         for (unsigned i = 0; i < nir_intrinsic_infos[intr->intrinsic].num_srcs; i++) {
++            if (remat(s, intr->src[i].ssa) != intr->src[i].ssa) {
++               s->failed = true;
++               return def;
++            }
++         }
++      } else {
++         s->failed = true;
++         return def;
++      }
++      break;
++   }
++
++   default:
++      s->failed = true;
++      return def;
++   }
++
++   _mesa_hash_table_insert(s->map, def, res);
++   return res;
++}
++
++static nir_def *
++eval_at(nir_builder *b, nir_def *def, float dx, float dy)
++{
++   struct remat_state s = {
++      .b = b,
++      .dx = dx,
++      .dy = dy,
++      .map = _mesa_pointer_hash_table_create(NULL),
++   };
++   nir_def *res = remat(&s, def);
++
++   _mesa_hash_table_destroy(s.map, NULL);
++   return s.failed ? NULL : res;
++}
++
++static bool
++lower_derivative(nir_builder *b, nir_intrinsic_instr *intr, void *data)
++{
++   bool x;
++
++   switch (intr->intrinsic) {
++   case nir_intrinsic_ddx:
++   case nir_intrinsic_ddx_fine:
++   case nir_intrinsic_ddx_coarse:
++      x = true;
++      break;
++   case nir_intrinsic_ddy:
++   case nir_intrinsic_ddy_fine:
++   case nir_intrinsic_ddy_coarse:
++      x = false;
++      break;
++   default:
++      return false;
++   }
++
++   b->cursor = nir_before_instr(&intr->instr);
++
++   const float h = DERIV_OFFSET;
++   nir_def *src = intr->src[0].ssa;
++   nir_def *plus = eval_at(b, src, x ? h : 0.0f, x ? 0.0f : h);
++   nir_def *minus = plus ? eval_at(b, src, x ? -h : 0.0f, x ? 0.0f : -h) : NULL;
++   nir_def *res;
++
++   if (plus && minus)
++      res = nir_fmul_imm(b, nir_fsub(b, plus, minus), 1.0 / (2.0 * h));
++   else
++      res = nir_imm_zero(b, intr->def.num_components, intr->def.bit_size);
++
++   nir_def_replace(&intr->def, res);
++   return true;
++}
++
++bool
++pan_nir_lower_derivatives_offset(nir_shader *shader)
++{
++   if (shader->info.stage != MESA_SHADER_FRAGMENT)
++      return false;
++
++   bool progress = nir_shader_intrinsics_pass(shader, lower_derivative,
++                                              nir_metadata_control_flow, NULL);
++   if (progress)
++      NIR_PASS(_, shader, nir_opt_dce);
++   return progress;
++}

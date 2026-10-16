@@ -1,0 +1,27 @@
+From: postmarketOS gta3xlwifi port
+Subject: [PATCH] dril: add exynos7885-dpu to the kmsro drivers
+
+The Exynos7885 DPU KMS driver scans out buffers that Panfrost renders
+through kmsro. Add it to the dril kmsro list so the X server's DRI loader
+finds exynos7885-dpu_dri.so for glamor/GLX.
+---
+--- a/src/gallium/targets/dril/dril_target.c
++++ b/src/gallium/targets/dril/dril_target.c
+@@ -651,6 +651,7 @@
+ DEFINE_LOADER_DRM_ENTRYPOINT(tegra)
+ DEFINE_LOADER_DRM_ENTRYPOINT(armada_drm)
+ DEFINE_LOADER_DRM_ENTRYPOINT(exynos)
++DEFINE_LOADER_DRM_ENTRYPOINT(exynos7885_dpu)
+ DEFINE_LOADER_DRM_ENTRYPOINT(gm12u320)
+ DEFINE_LOADER_DRM_ENTRYPOINT(hdlcd)
+ DEFINE_LOADER_DRM_ENTRYPOINT(hx8357d)
+--- a/src/gallium/targets/dril/meson.build
++++ b/src/gallium/targets/dril/meson.build
+@@ -66,6 +66,7 @@
+                'apple',
+                'armada-drm',
+                'exynos',
++               'exynos7885-dpu',
+                'gm12u320',
+                'hdlcd',
+                'hx8357d',

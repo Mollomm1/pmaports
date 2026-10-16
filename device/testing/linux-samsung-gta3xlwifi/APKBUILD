@@ -1,0 +1,125 @@
+# Reference: <https://postmarketos.org/vendorkernel>
+# Kernel config based on: arch/arm64/configs/pmos-a30_defconfig
+
+pkgname=linux-samsung-gta3xlwifi
+pkgver=6.15
+pkgrel=85
+pkgdesc="Samsung Galaxy Tab A with close to mainline kernel"
+arch="aarch64"
+_carch="arm64"
+_flavor="samsung-gta3xlwifi"
+url="https://kernel.org"
+license="GPL-2.0-only"
+options="!strip !check !tracedeps pmb:cross-native"
+makedepends="
+	bash
+	bc
+	bison
+	flex
+	kmod
+	openssl-dev
+	perl
+	postmarketos-installkernel
+	python3
+	xz
+	unzip
+"
+
+# Source
+_owner="Mollomm1"
+_repository="linux-exynos7885"
+_commit="fc00f9f2fad40220e00073549b8c1ff10a01cdad"
+
+# Device specific
+_config="config-$_flavor.$arch"
+_dts="exynos7904-t510"
+
+source="
+	$pkgname-$_commit.tar.gz::https://github.com/$_owner/$_repository/archive/$_commit.tar.gz
+	uniLoader.zip::https://github.com/Mollomm1/uniLoader/archive/refs/heads/main.zip
+	$_config
+	$_dts.dts
+"
+builddir="$srcdir/$_repository-$_commit"
+uniloaderdir="$srcdir/uniLoader-main"
+_outdir="out"
+
+prepare() 
+{
+	default_prepare
+	
+	# Add our defconfig
+	cp "$srcdir/$_config" .config
+	
+	# Add dts to the repo, and add it to the Makefile
+	cp "$srcdir/$_dts.dts" "$builddir/arch/arm64/boot/dts/exynos/"
+	sed -i "s/exynos7884b-a10.dtb/$_dts.dtb/" "$builddir/arch/arm64/boot/dts/exynos/Makefile"
+}
+
+build() {
+	# Linux Kernel
+	unset LDFLAGS
+	make ARCH=arm64 CC="${CC:-gcc}" prepare
+	make ARCH=arm64 CC="${CC:-gcc}" modules_prepare
+	make ARCH="$_carch" CC="${CC:-gcc}" \
+		KBUILD_BUILD_VERSION="$((pkgrel + 1))-postmarketOS"
+
+	# Preserve the exact source and complete output before abuild cleans it.
+	# This host-side archive is not installed on the tablet.
+	python3 tools/scsc-dev/scsc-dev.py capture \
+		--baseline "$builddir" --commit "$_commit" \
+		--cc "${CC:-gcc}" --cross-compile "${CROSS_COMPILE:-}" \
+		--archive "${SRCDEST:?}/gta3xl-wifi-baseline-$_commit-r$pkgrel.tar.gz"
+	
+	# Uniloader
+	cd "$uniloaderdir"
+	touch blob/ramdisk
+	cp "$builddir/arch/$_carch/boot/Image" blob/Image
+	cp "$builddir/arch/$_carch/boot/dts/exynos/exynos7904-t510.dtb" blob/dtb
+	test -s blob/Image
+	test -s blob/dtb
+	make ARCH="$arch" CC="${CC:-gcc}" t510_defconfig
+	# NOTE: generate linker.lds serially first. The top-level 'all'
+	# target builds arch/$arch/linker.lds in parallel with the link
+	# step without an ordering dependency, so with -j the link can
+	# read a half-written script (undefined _stack_end/dtb/kernel/
+	# ramdisk). Pre-building it makes the parallel build deterministic.
+	make ARCH="$arch" CC="${CC:-gcc}" "arch/$arch/linker.lds"
+	make ARCH="$arch" CC="${CC:-gcc}"
+}
+
+package() {
+	mkdir -p "$pkgdir/boot" "$pkgdir/lib/modules"
+	install -Dm644 "$builddir/scsc-baseline.json" \
+		"$pkgdir/usr/share/scsc-dev/baseline.json"
+	# Disable alias autoload; the device boot service loads ACPM in order.
+	mkdir -p "$pkgdir/etc/modprobe.d"
+	printf '%s\n' \
+		'blacklist exynos7885_acpm_mbox' \
+		'blacklist acpm_protocol' \
+		> "$pkgdir/etc/modprobe.d/scsc-development.conf"
+	printf '%s\n' 'options exynos_scsc_wifibt enable=1' \
+		> "$pkgdir/etc/modprobe.d/scsc-wifibt.conf"
+
+	# The bootloader does not support zipped kernels
+	make install modules_install dtbs_install \
+		ARCH="$_carch" \
+		INSTALL_PATH="$pkgdir/boot" \
+		INSTALL_MOD_PATH="$pkgdir" \
+		INSTALL_MOD_STRIP=1 \
+		INSTALL_DTBS_PATH="$pkgdir/boot/dtbs"
+	rm -f "$pkgdir"/usr/lib/modules/*/build "$pkgdir"/usr/lib/modules/*/source
+
+	install -D "$builddir/include/config/kernel.release" \
+		"$pkgdir/usr/share/kernel/$_flavor/kernel.release"
+
+	install -Dm644 "$uniloaderdir/uniLoader" \
+		"$pkgdir/boot/vmlinuz"
+}
+
+sha512sums="
+1cc869f5d638fd6439be11ecba921c674570b2831babf40b508f27ee31ea5d13259743fb0e296c6e3d540627f85c1e29e7c6984085cb977690081287c47c8668  linux-samsung-gta3xlwifi-fc00f9f2fad40220e00073549b8c1ff10a01cdad.tar.gz
+5c8af56e0b84bf6eb120085bd91eaa7663d6b1c7c9c96d1786144b4879a74369a3ad7e236ffa9bc318ebb1dc343e29054de476a2e1fad96ee5046e7cdb989321  uniLoader.zip
+68df3e3e75662d97e745a6843608008f569ec40d595dc7b374e0644b1bfb436d3dcaf173271d48ea3b274aefee3451eb5c5e908b1d3868e314bca182e1248ec9  config-samsung-gta3xlwifi.aarch64
+6605d392a3cdad97f2175bc7f667083ee63e6a718cbfe99f43f877deeec6c3d567402e2c5cde3b0fff8c53ce6cd5af7f70bddb30f1907da27cca02d463b70897  exynos7904-t510.dts
+"

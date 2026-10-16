@@ -1,0 +1,91 @@
+# Maintainer: Mollomm1 <68751598+Mollomm1@users.noreply.github.com>
+pkgname=helium-browser-bin
+pkgver=0.19.3.1
+pkgrel=1
+pkgdesc="Helium web browser (official glibc build, run through gcompat)"
+url="https://helium.computer"
+arch="aarch64"
+license="GPL-3.0-only AND BSD-3-Clause"
+# The browser is a prebuilt glibc binary: no automatic so: dependencies,
+# no stripping.
+options="!check !strip !tracedeps"
+makedepends="linux-headers patchelf python3"
+depends="
+	gcompat
+	libgcc
+	so:libasound.so.2
+	so:libatk-1.0.so.0
+	so:libatk-bridge-2.0.so.0
+	so:libatspi.so.0
+	so:libcairo.so.2
+	so:libcups.so.2
+	so:libdbus-1.so.3
+	so:libexpat.so.1
+	so:libgbm.so.1
+	so:libgio-2.0.so.0
+	so:libglib-2.0.so.0
+	so:libgobject-2.0.so.0
+	so:libgtk-3.so.0
+	so:libnspr4.so
+	so:libnss3.so
+	so:libnssutil3.so
+	so:libpango-1.0.so.0
+	so:libsmime3.so
+	so:libudev.so.1
+	so:libX11.so.6
+	so:libxcb.so.1
+	so:libXcomposite.so.1
+	so:libXdamage.so.1
+	so:libXext.so.6
+	so:libXfixes.so.3
+	so:libxkbcommon.so.0
+	so:libXrandr.so.2
+	"
+source="https://github.com/imputnet/helium-linux/releases/download/$pkgver/helium-$pkgver-arm64_linux.tar.xz
+	helium-compat.c
+	patch-helium.py
+	helium.sh
+	"
+builddir="$srcdir/helium-$pkgver-arm64_linux"
+
+build() {
+	${CC:-gcc} $CFLAGS -shared -fPIC -fvisibility=hidden \
+		-Wl,-soname,libhelium-compat.so $LDFLAGS \
+		-o "$srcdir"/libhelium-compat.so "$srcdir"/helium-compat.c
+
+	# See patch-helium.py and helium-compat.c. The first DT_NEEDED entry,
+	# libdl.so.2, is musl's libc itself; load the compatibility library
+	# there instead, ahead of musl in symbol lookup order.
+	local bin
+	python3 "$srcdir"/patch-helium.py \
+		helium helium_crashpad_handler chromedriver
+	for bin in helium helium_crashpad_handler chromedriver; do
+		patchelf --replace-needed libdl.so.2 \
+			/usr/lib/helium/libhelium-compat.so $bin
+	done
+}
+
+package() {
+	mkdir -p "$pkgdir"/usr/lib/helium
+	cp -a "$builddir"/. "$pkgdir"/usr/lib/helium/
+	install -Dm755 "$srcdir"/libhelium-compat.so \
+		"$pkgdir"/usr/lib/helium/libhelium-compat.so
+	install -Dm755 "$srcdir"/helium.sh "$pkgdir"/usr/bin/helium
+
+	install -Dm644 "$builddir"/helium.desktop \
+		"$pkgdir"/usr/share/applications/helium.desktop
+	install -Dm644 "$builddir"/product_logo_256.png \
+		"$pkgdir"/usr/share/icons/hicolor/256x256/apps/helium.png
+
+	# Unused here: Qt dialog shims (need Qt) and the upstream wrapper.
+	rm -f "$pkgdir"/usr/lib/helium/libqt5_shim.so \
+		"$pkgdir"/usr/lib/helium/libqt6_shim.so \
+		"$pkgdir"/usr/lib/helium/helium-wrapper
+}
+
+sha512sums="
+fe5a414d40bc10b1b7b776f17b15528e0e26f9c3126a7c9243845259bd27c46de0000cf2538381e1da4cbe00745778c2faa372348164bd16f0528c3c4d574dff  helium-0.19.3.1-arm64_linux.tar.xz
+1eed38805009d485325e47f09488f28fb38724d5ee7fa766932e8f034b2434740ec8f4a8943b1944c91c8daaf02344dd43150b7f23350183c213a40b2e13d8ef  helium-compat.c
+fe2c515327b62c9d111ecd9b9c9ed4f6ee4b16a4ecde9e9791392a8e1fce050aecabf9d4dbae6427d74b7e245a7004209e14a872dafe8739cc54c4a857b8acc1  patch-helium.py
+55b8024fd068dcdda1428aa09c313ee10f53f7c922c8788f654da7a7f3f1ba67e6b361ba75bb944518adc92dd3d99954227399f7345e390caab6b0ac313aa530  helium.sh
+"

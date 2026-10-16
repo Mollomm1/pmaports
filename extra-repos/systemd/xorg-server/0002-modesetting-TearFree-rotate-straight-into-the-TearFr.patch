@@ -1,0 +1,139 @@
+From 65d068b8907e78eff901f7ace7d7c8df9c8a1f7c Mon Sep 17 00:00:00 2001
+From: Mollomm1 <68751598+Mollomm1@users.noreply.github.com>
+Date: Fri, 16 Oct 2026 19:39:40 +0200
+Subject: [PATCH] modesetting: TearFree: rotate straight into the TearFree
+ buffers
+
+On a rotated CRTC, TearFree did two GPU passes per frame: the server
+rotated the damaged area into the rotation shadow, then TearFree copied
+the shadow (with the previous frame's damage as well) into its back
+buffer. Then it waited for the GPU with glamor_finish() before queueing
+the flip, so the CPU and GPU work of a frame ran one after the other.
+
+On the Galaxy Tab A 10.1 (2019) (portrait panel, landscape desktop,
+Mali-G71 with Panfrost), dragging a large composited window took about
+15 ms of GPU time per frame. The flip missed the vblank and the desktop
+fell to 30 fps.
+
+- Once a transformed CRTC has TearFree buffers, mark it
+  XF86DriverTransformOutput, so xf86RotateRedisplay() leaves its
+  rotation shadow alone, and have drmmode_copy_damage() transform the
+  root window straight into the TearFree buffer. xf86RotateCrtcRedisplay()
+  now checks the flag in its xf86RotateRedisplay() caller instead.
+- Flush instead of finishing before the flip. The kernel attaches the
+  GPU's write fence to the buffer's dma-buf and the atomic helpers wait
+  for it before scanning the buffer out, so the CPU need not block.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../drivers/modesetting/drmmode_display.c     | 39 +++++++++++++++++--
+ hw/xfree86/modes/xf86Rotate.c                 |  8 ++--
+ 2 files changed, 40 insertions(+), 7 deletions(-)
+
+diff --git a/hw/xfree86/drivers/modesetting/drmmode_display.c b/hw/xfree86/drivers/modesetting/drmmode_display.c
+index 8679722..d4f8813 100644
+--- a/hw/xfree86/drivers/modesetting/drmmode_display.c
++++ b/hw/xfree86/drivers/modesetting/drmmode_display.c
+@@ -1586,7 +1586,24 @@ drmmode_copy_damage(xf86CrtcPtr crtc, PixmapPtr dst, RegionPtr dmg, Bool empty)
+     DrawableRec *src;
+ 
+     /* Copy the screen's pixmap into the destination pixmap */
+-    if (crtc->rotatedPixmap) {
++    if (crtc->driverIsPerformingTransform & XF86DriverTransformOutput) {
++        /* TearFree on a transformed CRTC: transform the root window straight
++         * into the destination, without going through the rotation shadow.
++         * Like xf86RotateRedisplay, bypass SourceValidate so a software
++         * cursor is not pulled off the screen for the read.
++         */
++        SourceValidateProcPtr SourceValidate;
++
++        /* Keep the damage for a later frame until the root window exists */
++        if (!pScreen->root)
++            return;
++
++        SourceValidate = pScreen->SourceValidate;
++        pScreen->SourceValidate = miSourceValidate;
++        xf86RotateCrtcRedisplay(crtc, dst, &pScreen->root->drawable, dmg,
++                                TRUE);
++        pScreen->SourceValidate = SourceValidate;
++    } else if (crtc->rotatedPixmap) {
+         src = &crtc->rotatedPixmap->drawable;
+         xf86RotateCrtcRedisplay(crtc, dst, src, dmg, FALSE);
+     } else {
+@@ -1598,8 +1615,11 @@ drmmode_copy_damage(xf86CrtcPtr crtc, PixmapPtr dst, RegionPtr dmg, Bool empty)
+     if (empty)
+         RegionEmpty(dmg);
+ 
+-    /* Wait until the GC operations finish */
+-    modesettingPTR(crtc->scrn)->glamor.finish(pScreen);
++    /* Submit the GC operations. The kernel attaches the GPU's write fence
++     * to the buffer, and KMS (drm_atomic_helper_wait_for_fences) waits for
++     * it before scanning the buffer out, so the CPU needn't block here.
++     */
++    modesettingPTR(crtc->scrn)->glamor.block_handler(pScreen);
+ #endif
+ }
+ 
+@@ -1616,6 +1636,9 @@ drmmode_destroy_tearfree_shadow(xf86CrtcPtr crtc)
+     if (trf->flip_seq)
+         ms_drm_abort_seq(crtc->scrn, trf->flip_seq);
+ 
++    /* The rotation shadow is needed again without TearFree buffers */
++    crtc->driverIsPerformingTransform &= ~XF86DriverTransformOutput;
++
+     for (i = 0; i < ARRAY_SIZE(trf->buf); i++) {
+         if (trf->buf[i].px) {
+             drmmode_shadow_fb_destroy(crtc, trf->buf[i].px, (void *)(long)1,
+@@ -1656,6 +1679,12 @@ drmmode_create_tearfree_shadow(xf86CrtcPtr crtc)
+         RegionInit(&trf->buf[i].dmg, &crtc->bounds, 0);
+     }
+ 
++    /* On a transformed CRTC, the TearFree copy applies the transform itself,
++     * so the server no longer needs to keep the rotation shadow up to date.
++     */
++    if (crtc->transform_in_use)
++        crtc->driverIsPerformingTransform |= XF86DriverTransformOutput;
++
+     /* Initialize the front buffer with the current scanout */
+     drmmode_copy_damage(crtc, trf->buf[trf->back_idx ^ 1].px,
+                         &trf->buf[trf->back_idx ^ 1].dmg, TRUE);
+@@ -1688,6 +1717,10 @@ drmmode_set_mode_major(xf86CrtcPtr crtc, DisplayModePtr mode,
+         crtc->y = y;
+         crtc->rotation = rotation;
+ 
++        /* Let xf86CrtcRotate set up the rotation shadow for the new mode;
++         * TearFree takes over the transform again once its buffers exist.
++         */
++        crtc->driverIsPerformingTransform &= ~XF86DriverTransformOutput;
+         if (!xf86CrtcRotate(crtc)) {
+             goto done;
+         }
+diff --git a/hw/xfree86/modes/xf86Rotate.c b/hw/xfree86/modes/xf86Rotate.c
+index 944a01b..2ac9752 100644
+--- a/hw/xfree86/modes/xf86Rotate.c
++++ b/hw/xfree86/modes/xf86Rotate.c
+@@ -53,9 +53,6 @@ xf86RotateCrtcRedisplay(xf86CrtcPtr crtc, PixmapPtr dst_pixmap,
+     BoxPtr b = RegionRects(region);
+     XID include_inferiors = IncludeInferiors;
+ 
+-    if (crtc->driverIsPerformingTransform & XF86DriverTransformOutput)
+-        return;
+-
+     src = CreatePicture(None,
+                         src_drawable,
+                         format,
+@@ -198,7 +195,10 @@ xf86RotateRedisplay(ScreenPtr pScreen)
+         for (c = 0; c < xf86_config->num_crtc; c++) {
+             xf86CrtcPtr crtc = xf86_config->crtc[c];
+ 
+-            if (crtc->transform_in_use && crtc->enabled) {
++            /* Skip CRTCs whose driver applies the transform itself */
++            if (crtc->transform_in_use && crtc->enabled &&
++                !(crtc->driverIsPerformingTransform &
++                  XF86DriverTransformOutput)) {
+                 RegionRec crtc_damage;
+ 
+                 /* compute portion of damage that overlaps crtc */
+-- 
+2.43.0
+
